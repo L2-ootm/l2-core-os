@@ -20,6 +20,7 @@
 - [ ] Rate limiting por IP/token
 - [ ] Intent Router Lite (LLM barato) com budget diário
 - [x] Endpoints base de configuração (`/config/schema|current|validate|apply`)
+- [x] Sessão Baileys base real (QR/status/reconnect/outbound)
 
 ## Fase 3 — Android-first
 - [x] Contrato de sync incremental

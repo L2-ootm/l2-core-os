@@ -1,21 +1,175 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import axios from 'axios';
+import pino from 'pino';
+import qrcode from 'qrcode-terminal';
+import makeWASocket, {
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  Browsers,
+} from '@whiskeysockets/baileys';
 
 dotenv.config({ path: '../../infra/.env' });
 
 const app = express();
 app.use(express.json());
 
-const PORT = process.env.BAILEYS_PORT || 8090;
+const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
+const PORT = Number(process.env.BAILEYS_PORT || 8090);
 const API_BASE = process.env.API_BASE_URL || 'http://api:8000';
 const TOKEN = process.env.BAILEYS_INTERNAL_TOKEN || 'change_internal_token';
+const SESSION_NAME = process.env.BAILEYS_SESSION_NAME || 'main';
 
-// Placeholder de integração Baileys real.
-// Nesta fase, endpoint de simulação para validar fluxo inbound/outbound.
+let sock = null;
+let isConnecting = false;
+let reconnectAttempts = 0;
+let lastQr = null;
+let lastStatus = 'idle';
+let lastDisconnectReason = null;
+
+function normalizeText(text = '') {
+  return text.trim();
+}
+
+async function forwardInbound(msg) {
+  const textMsg = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+  const phone = (msg.key?.remoteJid || '').replace('@s.whatsapp.net', '');
+  if (!phone || !msg.key?.id) return;
+
+  const payload = {
+    external_message_id: msg.key.id,
+    phone: phone.startsWith('+') ? phone : `+${phone}`,
+    text: normalizeText(textMsg),
+    timestamp: new Date((msg.messageTimestamp || Date.now()) * 1000).toISOString(),
+    raw: msg,
+  };
+
+  await axios.post(`${API_BASE}/webhooks/whatsapp/inbound`, payload, {
+    headers: {
+      'x-internal-token': TOKEN,
+      'content-type': 'application/json',
+    },
+    timeout: 15000,
+  });
+}
+
+function scheduleReconnect() {
+  reconnectAttempts += 1;
+  const waitMs = Math.min(30000, 1000 * Math.pow(2, reconnectAttempts));
+  logger.warn({ reconnectAttempts, waitMs }, 'Scheduling reconnect');
+  setTimeout(() => {
+    connectWhatsApp().catch((err) => logger.error({ err }, 'Reconnect failed'));
+  }, waitMs);
+}
+
+async function connectWhatsApp(force = false) {
+  if (isConnecting) return;
+  if (sock && !force) return;
+
+  isConnecting = true;
+  lastStatus = 'connecting';
+
+  try {
+    const { state, saveCreds } = await useMultiFileAuthState(`./.auth/${SESSION_NAME}`);
+    const { version } = await fetchLatestBaileysVersion();
+
+    sock = makeWASocket({
+      version,
+      logger,
+      auth: state,
+      browser: Browsers.ubuntu('L2 Core OS'),
+      printQRInTerminal: false,
+      markOnlineOnConnect: false,
+      syncFullHistory: false,
+      defaultQueryTimeoutMs: 15000,
+      connectTimeoutMs: 30000,
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('connection.update', (update) => {
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
+        lastQr = qr;
+        lastStatus = 'qr_ready';
+        qrcode.generate(qr, { small: true });
+        logger.info('QR generated - scan with WhatsApp');
+      }
+
+      if (connection === 'open') {
+        reconnectAttempts = 0;
+        lastDisconnectReason = null;
+        lastStatus = 'connected';
+        logger.info('WhatsApp connected');
+      }
+
+      if (connection === 'close') {
+        const code = lastDisconnect?.error?.output?.statusCode;
+        lastDisconnectReason = code || 'unknown';
+        lastStatus = 'disconnected';
+
+        const loggedOut = code === DisconnectReason.loggedOut;
+        if (loggedOut) {
+          logger.warn('WhatsApp session logged out; reconnect requires new QR');
+          sock = null;
+          return;
+        }
+
+        sock = null;
+        scheduleReconnect();
+      }
+    });
+
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type !== 'notify') return;
+      for (const m of messages) {
+        if (m.key?.fromMe) continue;
+        try {
+          await forwardInbound(m);
+        } catch (err) {
+          logger.error({ err }, 'Failed to forward inbound message');
+        }
+      }
+    });
+  } catch (err) {
+    lastStatus = 'error';
+    logger.error({ err }, 'connectWhatsApp failed');
+    sock = null;
+    scheduleReconnect();
+  } finally {
+    isConnecting = false;
+  }
+}
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'baileys-gateway' });
+  res.json({
+    ok: true,
+    service: 'baileys-gateway',
+    status: lastStatus,
+    reconnect_attempts: reconnectAttempts,
+  });
+});
+
+app.get('/session/status', (_req, res) => {
+  res.json({
+    ok: true,
+    status: lastStatus,
+    has_qr: !!lastQr,
+    reconnect_attempts: reconnectAttempts,
+    last_disconnect_reason: lastDisconnectReason,
+  });
+});
+
+app.get('/session/qr', (_req, res) => {
+  if (!lastQr) return res.status(404).json({ ok: false, error: 'qr_not_available' });
+  res.json({ ok: true, qr: lastQr });
+});
+
+app.post('/session/connect', async (_req, res) => {
+  connectWhatsApp(true).catch((err) => logger.error({ err }, 'manual connect failed'));
+  res.json({ ok: true, started: true });
 });
 
 app.post('/simulate/inbound', async (req, res) => {
@@ -24,8 +178,8 @@ app.post('/simulate/inbound', async (req, res) => {
     const r = await axios.post(`${API_BASE}/webhooks/whatsapp/inbound`, payload, {
       headers: {
         'x-internal-token': TOKEN,
-        'content-type': 'application/json'
-      }
+        'content-type': 'application/json',
+      },
     });
     res.json({ ok: true, forwarded: true, api_response: r.data });
   } catch (err) {
@@ -34,14 +188,26 @@ app.post('/simulate/inbound', async (req, res) => {
 });
 
 app.post('/outbound/send', async (req, res) => {
-  // TODO: conectar envio real via Baileys
   const { idempotency_key, phone, message } = req.body || {};
   if (!idempotency_key || !phone || !message) {
     return res.status(400).json({ ok: false, error: 'missing_fields' });
   }
-  return res.json({ ok: true, queued: true, provider: 'baileys', idempotency_key });
+  if (!sock || lastStatus !== 'connected') {
+    return res.status(503).json({ ok: false, error: 'whatsapp_not_connected' });
+  }
+
+  const jid = `${String(phone).replace('+', '').replace(/\D/g, '')}@s.whatsapp.net`;
+
+  try {
+    await sock.sendMessage(jid, { text: String(message) });
+    return res.json({ ok: true, sent: true, provider: 'baileys', idempotency_key });
+  } catch (err) {
+    logger.error({ err }, 'Failed outbound send');
+    return res.status(500).json({ ok: false, error: 'send_failed' });
+  }
 });
 
-app.listen(PORT, () => {
-  console.log(`baileys-gateway listening on ${PORT}`);
+app.listen(PORT, async () => {
+  logger.info(`baileys-gateway listening on ${PORT}`);
+  await connectWhatsApp();
 });
