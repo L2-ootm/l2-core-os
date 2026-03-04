@@ -10,6 +10,8 @@ import makeWASocket, {
   Browsers,
 } from '@whiskeysockets/baileys';
 
+// Em container, env_file injeta variáveis. Em dev local, tenta carregar infra/.env.
+dotenv.config();
 dotenv.config({ path: '../../infra/.env' });
 
 const app = express();
@@ -29,7 +31,22 @@ let lastStatus = 'idle';
 let lastDisconnectReason = null;
 
 function normalizeText(text = '') {
-  return text.trim();
+  return String(text).trim();
+}
+
+function parseTimestamp(messageTimestamp) {
+  try {
+    if (messageTimestamp == null) return new Date().toISOString();
+    const n = Number(messageTimestamp);
+    if (!Number.isNaN(n) && Number.isFinite(n)) return new Date(n * 1000).toISOString();
+    if (typeof messageTimestamp?.toString === 'function') {
+      const nn = Number(messageTimestamp.toString());
+      if (!Number.isNaN(nn) && Number.isFinite(nn)) return new Date(nn * 1000).toISOString();
+    }
+    return new Date().toISOString();
+  } catch {
+    return new Date().toISOString();
+  }
 }
 
 async function forwardInbound(msg) {
@@ -41,7 +58,7 @@ async function forwardInbound(msg) {
     external_message_id: msg.key.id,
     phone: phone.startsWith('+') ? phone : `+${phone}`,
     text: normalizeText(textMsg),
-    timestamp: new Date((msg.messageTimestamp || Date.now()) * 1000).toISOString(),
+    timestamp: parseTimestamp(msg.messageTimestamp),
     raw: msg,
   };
 

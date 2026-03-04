@@ -118,8 +118,8 @@ def config_current():
         "env": {
             "APP_ENV": settings.app_env,
             "APP_NAME": settings.app_name,
-            "TIMEZONE": "America/Sao_Paulo",
-            "BAILEYS_SESSION_NAME": "main",
+            "TIMEZONE": settings.timezone,
+            "BAILEYS_SESSION_NAME": settings.baileys_session_name,
         },
         "overrides": get_db_settings(),
     }
@@ -220,10 +220,24 @@ def mobile_sync_push(req: MobilePushRequest, x_internal_token: str | None = Head
     if x_internal_token != settings.baileys_internal_token:
         raise HTTPException(status_code=401, detail="invalid_internal_token")
 
+    row_id = f"{req.device_id}:{req.sync_batch_id}"
     with engine.begin() as conn:
+        existing = conn.execute(
+            text("SELECT id FROM mobile_sync_log WHERE id = :rid"),
+            {"rid": row_id},
+        ).fetchone()
+
+        if existing:
+            return {
+                "ok": True,
+                "deduplicated": True,
+                "sync_batch_id": req.sync_batch_id,
+                "accepted_changes": 0,
+            }
+
         conn.execute(
             mobile_sync_log.insert().values(
-                id=f"{req.device_id}:{req.sync_batch_id}",
+                id=row_id,
                 device_id=req.device_id,
                 sync_batch_id=req.sync_batch_id,
                 payload=req.model_dump_json(),
@@ -233,6 +247,7 @@ def mobile_sync_push(req: MobilePushRequest, x_internal_token: str | None = Head
 
     return {
         "ok": True,
+        "deduplicated": False,
         "sync_batch_id": req.sync_batch_id,
         "accepted_changes": len(req.changes),
     }

@@ -1,5 +1,3 @@
-version: "3.9"
-
 name: l2-core-os
 
 services:

@@ -1,0 +1,13 @@
+# env / secrets
+infra/.env
+.env
+
+# python cache
+__pycache__/
+*.pyc
+
+# node
+node_modules/
+
+# auth state
+apps/baileys-gateway/.auth/
