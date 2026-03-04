@@ -19,8 +19,10 @@
 - [ ] RBAC funcional (owner/operator/viewer)
 - [ ] Rate limiting por IP/token
 - [ ] Intent Router Lite (LLM barato) com budget diário
+- [x] Endpoints base de configuração (`/config/schema|current|validate|apply`)
 
 ## Fase 3 — Android-first
-- [ ] Contrato de sync incremental
+- [x] Contrato de sync incremental
 - [ ] App Android v0 com agenda + confirmações
 - [ ] Offline mode + reconciliação
+- [x] Endpoints base de sync (`/mobile/sync/pull|push`)
