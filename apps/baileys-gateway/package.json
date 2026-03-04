@@ -1,0 +1,15 @@
+{
+  "name": "l2-baileys-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.11.0",
+    "baileys": "^6.7.18",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2"
+  }
+}
