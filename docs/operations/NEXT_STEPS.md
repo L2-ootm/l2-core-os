@@ -15,10 +15,10 @@
 - [ ] Implementar `l2-update` + rollback
 
 ## Fase 2 — Operação real
-- [ ] Wizard de configuração in-app
+- [x] Wizard de configuração in-app (MVP web)
 - [x] RBAC funcional (owner/operator/viewer)
 - [x] Rate limiting por IP/token
-- [ ] Intent Router Lite (LLM barato) com budget diário
+- [x] Intent Router Lite (fallback determinístico)
 - [x] Endpoints base de configuração (`/config/schema|current|validate|apply`)
 - [x] Sessão Baileys base real (QR/status/reconnect/outbound)
 - [x] HMAC + anti-replay em webhook inbound

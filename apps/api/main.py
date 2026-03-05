@@ -46,6 +46,37 @@ mobile_sync_log = Table(
     Column("created_at", String, nullable=False),
 )
 
+entities = Table(
+    "entities",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("type", String, nullable=False),
+    Column("full_name", String, nullable=False),
+    Column("contact_phone", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+)
+
+events = Table(
+    "events",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("entity_id", String, nullable=False),
+    Column("status", String, nullable=False),
+    Column("scheduled_for", String, nullable=True),
+    Column("updated_at", String, nullable=False),
+)
+
+transactions = Table(
+    "transactions",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("event_id", String, nullable=True),
+    Column("amount", String, nullable=False),
+    Column("type", String, nullable=False),
+    Column("status", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+)
+
 # --- Models ---
 class InboundMessage(BaseModel):
     external_message_id: str
@@ -75,6 +106,28 @@ class MobilePushRequest(BaseModel):
 class AITriageRequest(BaseModel):
     text: str
     source: str = "whatsapp"
+
+
+class EntityUpsert(BaseModel):
+    id: str
+    type: str
+    full_name: str
+    contact_phone: str
+
+
+class EventUpsert(BaseModel):
+    id: str
+    entity_id: str
+    status: str
+    scheduled_for: str | None = None
+
+
+class TransactionUpsert(BaseModel):
+    id: str
+    event_id: str | None = None
+    amount: str
+    type: str
+    status: str
 
 
 # --- Security / Rate limit state ---
@@ -320,14 +373,20 @@ async def whatsapp_inbound(
 
 @app.get("/mobile/sync/pull")
 def mobile_sync_pull(since: str | None = None, _claims: dict = Depends(require_roles({"owner", "operator", "viewer"}))):
+    since_value = since or "1970-01-01T00:00:00+00:00"
+    with engine.begin() as conn:
+        e_rows = conn.execute(text("SELECT id, type, full_name, contact_phone, updated_at FROM entities WHERE updated_at > :s ORDER BY updated_at ASC"), {"s": since_value}).mappings().all()
+        ev_rows = conn.execute(text("SELECT id, entity_id, status, scheduled_for, updated_at FROM events WHERE updated_at > :s ORDER BY updated_at ASC"), {"s": since_value}).mappings().all()
+        t_rows = conn.execute(text("SELECT id, event_id, amount, type, status, updated_at FROM transactions WHERE updated_at > :s ORDER BY updated_at ASC"), {"s": since_value}).mappings().all()
+
     return {
         "ok": True,
         "since": since,
         "server_time": now_iso(),
         "changes": {
-            "entities": [],
-            "events": [],
-            "transactions": [],
+            "entities": [dict(r) for r in e_rows],
+            "events": [dict(r) for r in ev_rows],
+            "transactions": [dict(r) for r in t_rows],
         },
     }
 
@@ -365,6 +424,45 @@ def mobile_sync_push(req: MobilePushRequest, _claims: dict = Depends(require_rol
         "sync_batch_id": req.sync_batch_id,
         "accepted_changes": len(req.changes),
     }
+
+
+@app.post("/entities/upsert")
+def entities_upsert(req: EntityUpsert, _claims: dict = Depends(require_roles({"owner", "operator"}))):
+    ts = now_iso()
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO entities (id, type, full_name, contact_phone, updated_at)
+            VALUES (:id,:type,:full_name,:contact_phone,:u)
+            ON CONFLICT(id) DO UPDATE SET
+              type=:type, full_name=:full_name, contact_phone=:contact_phone, updated_at=:u
+        """), {"id": req.id, "type": req.type, "full_name": req.full_name, "contact_phone": req.contact_phone, "u": ts})
+    return {"ok": True, "id": req.id, "updated_at": ts}
+
+
+@app.post("/events/upsert")
+def events_upsert(req: EventUpsert, _claims: dict = Depends(require_roles({"owner", "operator"}))):
+    ts = now_iso()
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO events (id, entity_id, status, scheduled_for, updated_at)
+            VALUES (:id,:entity_id,:status,:scheduled_for,:u)
+            ON CONFLICT(id) DO UPDATE SET
+              entity_id=:entity_id, status=:status, scheduled_for=:scheduled_for, updated_at=:u
+        """), {"id": req.id, "entity_id": req.entity_id, "status": req.status, "scheduled_for": req.scheduled_for, "u": ts})
+    return {"ok": True, "id": req.id, "updated_at": ts}
+
+
+@app.post("/transactions/upsert")
+def transactions_upsert(req: TransactionUpsert, _claims: dict = Depends(require_roles({"owner", "operator"}))):
+    ts = now_iso()
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO transactions (id, event_id, amount, type, status, updated_at)
+            VALUES (:id,:event_id,:amount,:type,:status,:u)
+            ON CONFLICT(id) DO UPDATE SET
+              event_id=:event_id, amount=:amount, type=:type, status=:status, updated_at=:u
+        """), {"id": req.id, "event_id": req.event_id, "amount": req.amount, "type": req.type, "status": req.status, "u": ts})
+    return {"ok": True, "id": req.id, "updated_at": ts}
 
 
 @app.get("/ai/capability/policy")
