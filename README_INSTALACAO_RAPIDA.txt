@@ -12,6 +12,7 @@ L2 CORE OS — INSTALAÇÃO RÁPIDA (Windows)
 2.1) Operação diária simplificada
 - Na raiz do projeto, execute: l2-control.bat
 - Use menu único para Start/Status/Logs/GO-NO-GO/Recover WhatsApp
+- Opção 8 prioriza a UI moderna (Lovable) em http://localhost:8080; se não existir, abre o painel técnico em http://localhost:3000
 
 3) Acesso
 - Painel/Wizard: http://localhost:3000

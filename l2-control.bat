@@ -134,6 +134,27 @@ call :maybe_pause
 goto menu
 
 :open_web
+echo [INFO] Abrindo dashboard principal (Lovable UI)...
+set UI_DIR=%PROJECT_ROOT%\ui-lovable-b5ec4413
+
+rem 1) Se UI moderna ja estiver rodando (vite 8080), abre direto.
+powershell -NoProfile -Command "try{(Invoke-WebRequest -UseBasicParsing 'http://localhost:8080' -TimeoutSec 2) > $null; exit 0}catch{exit 1}"
+if %errorlevel% EQU 0 (
+  start http://localhost:8080
+  goto menu
+)
+
+rem 2) Se existe projeto UI, tenta iniciar Vite em nova janela.
+if exist "%UI_DIR%\package.json" (
+  echo [INFO] Iniciando UI moderna em http://localhost:8080 ...
+  start "L2 UI (Lovable)" cmd /k "cd /d "%UI_DIR%" && npm run dev"
+  timeout /t 4 /nobreak >nul
+  start http://localhost:8080
+  goto menu
+)
+
+rem 3) Fallback para painel operacional tecnico.
+echo [WARN] UI Lovable nao encontrada. Abrindo painel tecnico em http://localhost:3000
 start http://localhost:3000
 goto menu
 

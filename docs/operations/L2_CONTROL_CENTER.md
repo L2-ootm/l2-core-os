@@ -19,7 +19,7 @@ O script foi construído para ser **idempotente e antifrágil**:
 5. Logs rápidos (api/gateway/db)
 6. GO/NO-GO
 7. WhatsApp recover (reconnect + catch-up)
-8. Abrir dashboard
+8. Abrir dashboard (prioriza UI Lovable em `http://localhost:8080`; fallback técnico `http://localhost:3000`)
 9. Recriar `.env` (self-heal)
 
 ## Como usar
