@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Header, HTTPException, Request, Depends
+from fastapi import FastAPI, Header, HTTPException, Request, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, MetaData, Table, Column, String, Text
 from sqlalchemy.sql import text
@@ -780,6 +780,113 @@ def transactions_upsert(req: TransactionUpsert, _claims: dict = Depends(require_
               event_id=:event_id, amount=:amount, type=:type, status=:status, updated_at=:u
         """), {"id": req.id, "event_id": req.event_id, "amount": req.amount, "type": req.type, "status": req.status, "u": ts})
     return {"ok": True, "id": req.id, "updated_at": ts}
+
+
+@app.get("/entities/list")
+def entities_list(
+    q: str | None = None,
+    classification: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    _claims: dict = Depends(require_roles({"owner", "operator", "viewer"})),
+):
+    sql = """
+        SELECT e.id, e.type, e.full_name, e.contact_phone, e.updated_at,
+               COALESCE(p.classification, 'unknown') AS classification
+        FROM entities e
+        LEFT JOIN phone_identity p ON (p.phone = e.contact_phone OR p.phone = REPLACE(e.contact_phone,'+',''))
+        WHERE 1=1
+    """
+    params: dict[str, Any] = {"limit": limit}
+    if q:
+        sql += " AND (LOWER(e.full_name) LIKE :q OR e.contact_phone LIKE :qraw)"
+        params["q"] = f"%{q.lower()}%"
+        params["qraw"] = f"%{q}%"
+    if classification:
+        sql += " AND COALESCE(p.classification,'unknown') = :c"
+        params["c"] = classification
+    sql += " ORDER BY e.updated_at DESC LIMIT :limit"
+
+    with engine.begin() as conn:
+        rows = conn.execute(text(sql), params).mappings().all()
+    return {"ok": True, "items": [dict(r) for r in rows]}
+
+
+@app.get("/events/list")
+def events_list(
+    status: str | None = None,
+    limit: int = Query(default=200, ge=1, le=500),
+    _claims: dict = Depends(require_roles({"owner", "operator", "viewer"})),
+):
+    sql = """
+        SELECT ev.id, ev.entity_id, ev.status, ev.scheduled_for, ev.updated_at,
+               e.full_name, e.contact_phone
+        FROM events ev
+        LEFT JOIN entities e ON e.id = ev.entity_id
+        WHERE 1=1
+    """
+    params: dict[str, Any] = {"limit": limit}
+    if status:
+        sql += " AND ev.status = :s"
+        params["s"] = status
+    sql += " ORDER BY ev.updated_at DESC LIMIT :limit"
+
+    with engine.begin() as conn:
+        rows = conn.execute(text(sql), params).mappings().all()
+    return {"ok": True, "items": [dict(r) for r in rows]}
+
+
+@app.get("/transactions/list")
+def transactions_list(
+    status: str | None = None,
+    ttype: str | None = Query(default=None, alias="type"),
+    limit: int = Query(default=200, ge=1, le=500),
+    _claims: dict = Depends(require_roles({"owner", "operator", "viewer"})),
+):
+    sql = """
+        SELECT t.id, t.event_id, t.amount, t.type, t.status, t.updated_at,
+               ev.entity_id, e.full_name
+        FROM transactions t
+        LEFT JOIN events ev ON ev.id = t.event_id
+        LEFT JOIN entities e ON e.id = ev.entity_id
+        WHERE 1=1
+    """
+    params: dict[str, Any] = {"limit": limit}
+    if status:
+        sql += " AND t.status = :s"
+        params["s"] = status
+    if ttype:
+        sql += " AND t.type = :t"
+        params["t"] = ttype
+    sql += " ORDER BY t.updated_at DESC LIMIT :limit"
+
+    with engine.begin() as conn:
+        rows = conn.execute(text(sql), params).mappings().all()
+    return {"ok": True, "items": [dict(r) for r in rows]}
+
+
+@app.get("/finance/summary")
+def finance_summary(_claims: dict = Depends(require_roles({"owner", "operator", "viewer"}))):
+    with engine.begin() as conn:
+        rows = conn.execute(text("SELECT amount, type, status FROM transactions")).fetchall()
+
+    def to_num(v: Any) -> float:
+        try:
+            return float(str(v).replace(',', '.'))
+        except Exception:
+            return 0.0
+
+    income = sum(to_num(r[0]) for r in rows if r[1] == "income")
+    expense = sum(to_num(r[0]) for r in rows if r[1] == "expense")
+    pending = sum(to_num(r[0]) for r in rows if str(r[2]) == "pending")
+
+    return {
+        "ok": True,
+        "income_total": round(income, 2),
+        "expense_total": round(expense, 2),
+        "net_total": round(income - expense, 2),
+        "pending_total": round(pending, 2),
+        "count": len(rows),
+    }
 
 
 @app.get("/ai/capability/policy")
