@@ -4,10 +4,12 @@ from sqlalchemy import create_engine, MetaData, Table, Column, String, Text
 from sqlalchemy.sql import text
 from datetime import datetime, timezone, timedelta
 from typing import Any
+from pathlib import Path
 import json
 import hmac
 import hashlib
 import time
+import uuid
 import jwt
 from core.config import settings
 from core.ai_fallback import classify_intent
@@ -99,6 +101,40 @@ human_review_queue = Table(
     Column("created_at", String, nullable=False),
 )
 
+phone_identity = Table(
+    "phone_identity",
+    metadata,
+    Column("phone", String, primary_key=True),
+    Column("source", String, nullable=False),
+    Column("classification", String, nullable=False),
+    Column("entity_id", String, nullable=True),
+    Column("last_seen_at", String, nullable=False),
+)
+
+service_requests = Table(
+    "service_requests",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("entity_id", String, nullable=True),
+    Column("phone", String, nullable=False),
+    Column("intent", String, nullable=False),
+    Column("status", String, nullable=False),
+    Column("notes", Text, nullable=True),
+    Column("created_at", String, nullable=False),
+)
+
+document_jobs = Table(
+    "document_jobs",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("kind", String, nullable=False),
+    Column("status", String, nullable=False),
+    Column("output_path", String, nullable=True),
+    Column("checksum", String, nullable=True),
+    Column("payload", Text, nullable=False),
+    Column("created_at", String, nullable=False),
+)
+
 # --- Models ---
 class InboundMessage(BaseModel):
     external_message_id: str
@@ -160,6 +196,14 @@ class TransactionUpsert(BaseModel):
     status: str
 
 
+class DocumentGenerateRequest(BaseModel):
+    kind: str
+    entity_id: str | None = None
+    event_id: str | None = None
+    title: str
+    body: str
+
+
 # --- Security / Rate limit state ---
 rate_ip: dict[str, tuple[int, int]] = {}
 rate_token: dict[str, tuple[int, int]] = {}
@@ -212,6 +256,70 @@ def get_db_settings() -> dict[str, Any]:
         except Exception:
             parsed[r.key] = r.value
     return parsed
+
+
+def get_allowed_agenda_phones() -> set[str]:
+    cfg = get_db_settings()
+    raw = cfg.get("agenda_allowed_phones", [])
+    normalized: set[str] = set()
+    if isinstance(raw, str):
+        raw = [x.strip() for x in raw.split(",") if x.strip()]
+    if isinstance(raw, list):
+        for p in raw:
+            s = str(p).strip()
+            if s:
+                normalized.add(s)
+                normalized.add(s.replace("+", ""))
+    return normalized
+
+
+def classify_phone_source(conn, phone: str) -> dict[str, Any]:
+    phone_n = (phone or "").strip()
+    phone_n2 = phone_n.replace("+", "")
+    agenda = get_allowed_agenda_phones()
+
+    row = conn.execute(text("SELECT id FROM entities WHERE contact_phone IN (:p1,:p2) LIMIT 1"), {"p1": phone_n, "p2": phone_n2}).fetchone()
+    entity_id = row[0] if row else None
+
+    in_agenda = phone_n in agenda or phone_n2 in agenda
+    if entity_id and in_agenda:
+        cls = {"source": "agenda+db", "classification": "known_client", "entity_id": entity_id}
+    elif entity_id and not in_agenda:
+        cls = {"source": "db", "classification": "known_client", "entity_id": entity_id}
+    elif (not entity_id) and in_agenda:
+        cls = {"source": "agenda", "classification": "new_lead", "entity_id": None}
+    else:
+        cls = {"source": "unknown", "classification": "unknown", "entity_id": None}
+
+    conn.execute(
+        text(
+            """
+            INSERT INTO phone_identity (phone, source, classification, entity_id, last_seen_at)
+            VALUES (:p,:s,:c,:e,:u)
+            ON CONFLICT(phone) DO UPDATE SET
+              source=:s, classification=:c, entity_id=:e, last_seen_at=:u
+            """
+        ),
+        {"p": phone_n, "s": cls["source"], "c": cls["classification"], "e": cls["entity_id"], "u": now_iso()},
+    )
+
+    return cls
+
+
+def maybe_create_service_request(conn, entity_id: str | None, phone: str, intent: str, notes: str | None):
+    sr_id = str(uuid.uuid4())
+    conn.execute(
+        service_requests.insert().values(
+            id=sr_id,
+            entity_id=entity_id,
+            phone=phone,
+            intent=intent,
+            status="open",
+            notes=notes,
+            created_at=now_iso(),
+        )
+    )
+    return sr_id
 
 
 def decode_auth_token(auth_header: str | None) -> dict[str, Any]:
@@ -406,6 +514,9 @@ async def whatsapp_inbound(
         intent = "reschedule"
 
     status_updated = None
+    service_request_id = None
+    phone_profile = None
+
     with engine.begin() as conn:
         existing = conn.execute(
             text("SELECT id FROM inbound_messages WHERE external_message_id = :mid"),
@@ -426,8 +537,23 @@ async def whatsapp_inbound(
             )
         )
 
+        phone_profile = classify_phone_source(conn, payload.phone)
         entity_id, event = resolve_entity_and_latest_event_by_phone(conn, payload.phone)
-        if event:
+
+        # Se não está na agenda nem no banco, não automatiza; manda para revisão.
+        if phone_profile["classification"] == "unknown":
+            conn.execute(
+                human_review_queue.insert().values(
+                    id=f"hr:{payload.external_message_id}",
+                    source="whatsapp_unknown_phone",
+                    reference_id=payload.external_message_id,
+                    text=payload.text,
+                    status="pending",
+                    created_at=now_iso(),
+                )
+            )
+            write_audit(conn, "unknown_phone_queued", "inbound_messages", payload.external_message_id, {"phone": payload.phone})
+        else:
             next_status = None
             if intent == "confirm":
                 next_status = "confirmed"
@@ -436,7 +562,7 @@ async def whatsapp_inbound(
             elif intent == "reschedule":
                 next_status = "reschedule_requested"
 
-            if next_status:
+            if next_status and event:
                 conn.execute(
                     text("UPDATE events SET status = :s, updated_at = :u WHERE id = :id"),
                     {"s": next_status, "u": now_iso(), "id": event["id"]},
@@ -444,17 +570,23 @@ async def whatsapp_inbound(
                 status_updated = {"event_id": event["id"], "from": event["status"], "to": next_status}
                 write_audit(conn, "intent_status_update", "events", event["id"], {"intent": intent, "phone": payload.phone})
             else:
-                conn.execute(
-                    human_review_queue.insert().values(
-                        id=f"hr:{payload.external_message_id}",
-                        source="whatsapp_inbound",
-                        reference_id=payload.external_message_id,
-                        text=payload.text,
-                        status="pending",
-                        created_at=now_iso(),
+                normalized = (payload.text or "").lower()
+                wants_new_service = any(k in normalized for k in ["novo serviço", "novo servico", "orçamento", "orcamento", "clareamento", "limpeza"])
+                if wants_new_service:
+                    service_request_id = maybe_create_service_request(conn, entity_id, payload.phone, "new_service", payload.text)
+                    write_audit(conn, "service_request_created", "service_requests", service_request_id, {"phone": payload.phone})
+                else:
+                    conn.execute(
+                        human_review_queue.insert().values(
+                            id=f"hr:{payload.external_message_id}",
+                            source="whatsapp_inbound",
+                            reference_id=payload.external_message_id,
+                            text=payload.text,
+                            status="pending",
+                            created_at=now_iso(),
+                        )
                     )
-                )
-                write_audit(conn, "human_review_queued", "inbound_messages", payload.external_message_id, {"intent": intent})
+                    write_audit(conn, "human_review_queued", "inbound_messages", payload.external_message_id, {"intent": intent})
 
     return {
         "ok": True,
@@ -462,6 +594,8 @@ async def whatsapp_inbound(
         "external_message_id": payload.external_message_id,
         "intent": intent,
         "status_updated": status_updated,
+        "phone_profile": phone_profile,
+        "service_request_id": service_request_id,
     }
 
 
@@ -723,4 +857,74 @@ def ai_block_action(req: AIBlockActionRequest, _claims: dict = Depends(require_r
         "route": route,
         "next_status": next_status,
         "updated_event": updated_event,
+    }
+
+
+@app.get("/ops/inbound/summary")
+def inbound_summary(_claims: dict = Depends(require_roles({"owner", "operator", "viewer"}))):
+    with engine.begin() as conn:
+        total = conn.execute(text("SELECT COUNT(1) FROM inbound_messages")).fetchone()[0]
+        unknown = conn.execute(text("SELECT COUNT(1) FROM human_review_queue WHERE status='pending' AND source='whatsapp_unknown_phone'"))
+        unknown_count = unknown.fetchone()[0]
+        new_leads = conn.execute(text("SELECT COUNT(1) FROM phone_identity WHERE classification='new_lead'"))
+        new_leads_count = new_leads.fetchone()[0]
+    return {
+        "ok": True,
+        "inbound_total": total,
+        "unknown_pending": unknown_count,
+        "new_leads_detected": new_leads_count,
+    }
+
+
+@app.post("/documents/generate")
+def documents_generate(req: DocumentGenerateRequest, _claims: dict = Depends(require_roles({"owner", "operator"}))):
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+    except Exception:
+        raise HTTPException(status_code=500, detail="reportlab_not_installed")
+
+    base = Path(__file__).resolve().parent / "generated-docs"
+    base.mkdir(parents=True, exist_ok=True)
+
+    doc_id = str(uuid.uuid4())
+    filename = f"{req.kind}_{doc_id}.pdf"
+    out_path = base / filename
+
+    c = canvas.Canvas(str(out_path), pagesize=A4)
+    y = 800
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(40, y, req.title)
+    y -= 30
+    c.setFont("Helvetica", 10)
+    for line in (req.body or "").split("\n"):
+        c.drawString(40, y, line[:120])
+        y -= 14
+        if y < 60:
+            c.showPage()
+            c.setFont("Helvetica", 10)
+            y = 800
+    c.save()
+
+    checksum = hashlib.sha256(out_path.read_bytes()).hexdigest()
+
+    with engine.begin() as conn:
+        conn.execute(
+            document_jobs.insert().values(
+                id=doc_id,
+                kind=req.kind,
+                status="generated",
+                output_path=str(out_path),
+                checksum=checksum,
+                payload=req.model_dump_json(),
+                created_at=now_iso(),
+            )
+        )
+        write_audit(conn, "document_generated", "document_jobs", doc_id, {"kind": req.kind, "path": str(out_path)})
+
+    return {
+        "ok": True,
+        "document_id": doc_id,
+        "path": str(out_path),
+        "sha256": checksum,
     }

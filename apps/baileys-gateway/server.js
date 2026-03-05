@@ -31,6 +31,9 @@ let reconnectAttempts = 0;
 let lastQr = null;
 let lastStatus = 'idle';
 let lastDisconnectReason = null;
+const processedInboundIds = new Set();
+const processedOutboundKeys = new Set();
+let lastCatchupAt = null;
 
 function normalizeText(text = '') {
   return String(text).trim();
@@ -51,10 +54,19 @@ function parseTimestamp(messageTimestamp) {
   }
 }
 
+function rememberWithCap(setObj, value, cap = 5000) {
+  setObj.add(value);
+  if (setObj.size > cap) {
+    const first = setObj.values().next().value;
+    if (first) setObj.delete(first);
+  }
+}
+
 async function forwardInbound(msg) {
   const textMsg = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
   const phone = (msg.key?.remoteJid || '').replace('@s.whatsapp.net', '');
   if (!phone || !msg.key?.id) return;
+  if (processedInboundIds.has(msg.key.id)) return;
 
   const payload = {
     external_message_id: msg.key.id,
@@ -77,6 +89,8 @@ async function forwardInbound(msg) {
     },
     timeout: 15000,
   });
+
+  rememberWithCap(processedInboundIds, msg.key.id);
 }
 
 function scheduleReconnect() {
@@ -127,6 +141,7 @@ async function connectWhatsApp(force = false) {
         reconnectAttempts = 0;
         lastDisconnectReason = null;
         lastStatus = 'connected';
+        lastCatchupAt = new Date().toISOString();
         logger.info('WhatsApp connected');
       }
 
@@ -148,7 +163,7 @@ async function connectWhatsApp(force = false) {
     });
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
-      if (type !== 'notify') return;
+      if (type !== 'notify' && type !== 'append') return;
       for (const m of messages) {
         if (m.key?.fromMe) continue;
         try {
@@ -184,6 +199,9 @@ app.get('/session/status', (_req, res) => {
     has_qr: !!lastQr,
     reconnect_attempts: reconnectAttempts,
     last_disconnect_reason: lastDisconnectReason,
+    processed_inbound_ids: processedInboundIds.size,
+    processed_outbound_keys: processedOutboundKeys.size,
+    last_catchup_at: lastCatchupAt,
   });
 });
 
@@ -223,6 +241,9 @@ app.post('/outbound/send', async (req, res) => {
   if (!idempotency_key || !phone || !message) {
     return res.status(400).json({ ok: false, error: 'missing_fields' });
   }
+  if (processedOutboundKeys.has(idempotency_key)) {
+    return res.json({ ok: true, deduplicated: true, provider: 'baileys', idempotency_key });
+  }
   if (!sock || lastStatus !== 'connected') {
     return res.status(503).json({ ok: false, error: 'whatsapp_not_connected' });
   }
@@ -231,6 +252,7 @@ app.post('/outbound/send', async (req, res) => {
 
   try {
     await sock.sendMessage(jid, { text: String(message) });
+    rememberWithCap(processedOutboundKeys, idempotency_key);
     return res.json({ ok: true, sent: true, provider: 'baileys', idempotency_key });
   } catch (err) {
     logger.error({ err }, 'Failed outbound send');

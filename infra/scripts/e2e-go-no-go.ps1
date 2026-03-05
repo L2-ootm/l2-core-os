@@ -104,6 +104,13 @@ try {
 Assert-True "Webhook inbound signed" $webhookOk
 Assert-True "Webhook updates event status" $webhookStatusUpdate
 
+$sum = Invoke-RestMethod "$ApiBase/ops/inbound/summary" -Headers $authOwner
+Assert-True "Inbound summary endpoint" ($sum.ok -eq $true)
+
+$docReq = @{ kind='contract'; title='Contrato de Prestacao'; body='Cliente: Teste`nServico: Avaliacao' } | ConvertTo-Json
+$doc = Invoke-RestMethod -Method Post "$ApiBase/documents/generate" -Headers $authOwner -Body $docReq
+Assert-True "PDF contract generated" (![string]::IsNullOrWhiteSpace($doc.sha256))
+
 Write-Host ""
 Write-Host "TOTAL PASS: $pass" -ForegroundColor Green
 Write-Host "TOTAL FAIL: $fail" -ForegroundColor Yellow

@@ -15,3 +15,4 @@ apps/baileys-gateway/.auth/
 
 # runtime artifacts
 apps/api/celerybeat-schedule
+apps/api/generated-docs/
