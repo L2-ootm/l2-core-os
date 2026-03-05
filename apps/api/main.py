@@ -258,6 +258,16 @@ def get_db_settings() -> dict[str, Any]:
     return parsed
 
 
+def get_runtime_whatsapp_policy() -> dict[str, Any]:
+    cfg = get_db_settings()
+    return {
+        "number_mode": str(cfg.get("whatsapp_number_mode", "primary")).lower(),  # dedicated|primary
+        "auto_reply_safe_only": bool(cfg.get("auto_reply_only_safe_intents", True)),
+        "human_review_default": bool(cfg.get("human_review_default", True)),
+        "auto_mark_read": bool(cfg.get("auto_mark_read", False)),
+    }
+
+
 def get_allowed_agenda_phones() -> set[str]:
     cfg = get_db_settings()
     raw = cfg.get("agenda_allowed_phones", [])
@@ -440,7 +450,10 @@ def config_schema(_claims: dict = Depends(require_roles({"owner", "operator", "v
         "groups": {
             "system": ["APP_ENV", "TIMEZONE"],
             "security": ["RBAC_ENABLED", "RATE_LIMIT_IP_PER_MIN", "RATE_LIMIT_TOKEN_PER_MIN"],
-            "whatsapp": ["BAILEYS_SESSION_NAME", "BAILEYS_QR_AUTO", "BAILEYS_WEBHOOK_TARGET"],
+            "whatsapp": [
+                "BAILEYS_SESSION_NAME", "BAILEYS_QR_AUTO", "BAILEYS_WEBHOOK_TARGET",
+                "whatsapp_number_mode", "auto_mark_read", "auto_reply_only_safe_intents", "human_review_default"
+            ],
             "intelligence": ["FEATURE_INTENT_ROUTER", "INTENT_ROUTER_MODEL", "INTENT_CONFIDENCE_THRESHOLD"],
             "mobile": ["MOBILE_SYNC_ENABLED", "MOBILE_SYNC_POLL_SECONDS", "MOBILE_DEVICE_BINDING_REQUIRED"],
         }
@@ -457,6 +470,7 @@ def config_current(_claims: dict = Depends(require_roles({"owner", "operator", "
             "BAILEYS_SESSION_NAME": settings.baileys_session_name,
         },
         "overrides": get_db_settings(),
+        "whatsapp_policy": get_runtime_whatsapp_policy(),
     }
 
 
@@ -539,6 +553,11 @@ async def whatsapp_inbound(
 
         phone_profile = classify_phone_source(conn, payload.phone)
         entity_id, event = resolve_entity_and_latest_event_by_phone(conn, payload.phone)
+        policy = get_runtime_whatsapp_policy()
+
+        # Modo número principal: conservador por padrão.
+        is_primary_mode = policy.get("number_mode") == "primary"
+        safe_intent = intent in {"confirm", "cancel", "reschedule"}
 
         # Se não está na agenda nem no banco, não automatiza; manda para revisão.
         if phone_profile["classification"] == "unknown":
@@ -561,6 +580,30 @@ async def whatsapp_inbound(
                 next_status = "canceled"
             elif intent == "reschedule":
                 next_status = "reschedule_requested"
+
+            # Guardrail: número principal + política safe-only => só automação segura
+            if is_primary_mode and policy.get("auto_reply_safe_only", True) and not safe_intent:
+                conn.execute(
+                    human_review_queue.insert().values(
+                        id=f"hr:{payload.external_message_id}",
+                        source="whatsapp_primary_safe_mode",
+                        reference_id=payload.external_message_id,
+                        text=payload.text,
+                        status="pending",
+                        created_at=now_iso(),
+                    )
+                )
+                write_audit(conn, "primary_safe_mode_queued", "inbound_messages", payload.external_message_id, {"intent": intent})
+                return {
+                    "ok": True,
+                    "deduplicated": False,
+                    "external_message_id": payload.external_message_id,
+                    "intent": intent,
+                    "status_updated": None,
+                    "phone_profile": phone_profile,
+                    "service_request_id": None,
+                    "policy": policy,
+                }
 
             if next_status and event:
                 conn.execute(
