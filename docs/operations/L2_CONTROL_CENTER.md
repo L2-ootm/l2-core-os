@@ -3,8 +3,13 @@
 Script unificado de operação diária:
 - `l2-control.bat` (na raiz do projeto)
 
-Atalho legado (ainda pode existir em docs antigos):
-- `infra/scripts/l2-control.bat` (descontinuado)
+## Design
+O script foi construído para ser **idempotente e antifrágil**:
+- detecta automaticamente a raiz do projeto
+- autoabre Docker Desktop quando necessário
+- tenta auto-recuperar `.env` ausente
+- gera `.env` mínimo seguro se `infra/.env.example` não existir
+- opera com retries em start seguro
 
 ## Recursos
 1. Start seguro (up + health)
@@ -15,11 +20,15 @@ Atalho legado (ainda pode existir em docs antigos):
 6. GO/NO-GO
 7. WhatsApp recover (reconnect + catch-up)
 8. Abrir dashboard
+9. Recriar `.env` (self-heal)
 
 ## Como usar
-1. Abra a pasta `infra/scripts`
-2. Execute `l2-control.bat`
-3. Use o menu numérico
+1. Execute `l2-control.bat` na raiz do projeto
+2. Se faltar `.env`, o script auto-cria/corrige
+3. Use opção 1 para start seguro e opção 6 para validação
 
-## Objetivo
-Reduzir erro humano e padronizar inicialização/operação segura do L2 CORE OS.
+## Cenários de erro tratados
+- Se `infra/.env` estiver ausente, o script reconstrói automaticamente.
+- Se `infra/.env.example` não existir, o script gera um `.env` mínimo seguro.
+- Se o Docker não estiver ativo, tenta abrir Docker Desktop e aguarda readiness.
+- Se o script for executado fora da raiz, ele tenta autodetectar a raiz (incluindo pasta pai).
