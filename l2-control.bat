@@ -2,7 +2,14 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 set NON_INTERACTIVE=0
-if not "%~1"=="" set NON_INTERACTIVE=1
+
+if /i "%~1"=="--start" set NON_INTERACTIVE=1
+if /i "%~1"=="--stop" set NON_INTERACTIVE=1
+if /i "%~1"=="--restart" set NON_INTERACTIVE=1
+if /i "%~1"=="--status" set NON_INTERACTIVE=1
+if /i "%~1"=="--go" set NON_INTERACTIVE=1
+if /i "%~1"=="--wa-recover" set NON_INTERACTIVE=1
+if /i "%~1"=="--recreate-env" set NON_INTERACTIVE=1
 
 call :detect_paths
 if errorlevel 1 goto fatal
