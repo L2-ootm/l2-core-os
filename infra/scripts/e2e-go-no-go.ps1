@@ -12,15 +12,27 @@ function Assert-True($name, $cond) {
   else { Write-Host "[FAIL] $name" -ForegroundColor Red; $script:fail++ }
 }
 
+function Get-EnvValue($path, $key, $default="") {
+  if (!(Test-Path $path)) { return $default }
+  $line = Get-Content $path | Where-Object { $_ -match "^$key=" } | Select-Object -First 1
+  if (-not $line) { return $default }
+  return ($line -replace "^$key=","").Trim()
+}
+
 try {
   $h = Invoke-RestMethod "$ApiBase/health"
   Assert-True "API health" ($h.ok -eq $true)
 } catch { Assert-True "API health" $false }
 
-try {
-  $gh = Invoke-RestMethod "$GatewayBase/health"
-  Assert-True "Gateway health" ($gh.ok -eq $true)
-} catch { Assert-True "Gateway health" $false }
+$gwOk = $false
+for($i=0;$i -lt 5;$i++){
+  try {
+    $gh = Invoke-RestMethod "$GatewayBase/health"
+    if($gh.ok -eq $true){ $gwOk = $true; break }
+  } catch {}
+  Start-Sleep -Seconds 2
+}
+Assert-True "Gateway health" $gwOk
 
 $owner = Invoke-RestMethod -Method Post "$ApiBase/auth/dev-token?role=owner"
 $viewer = Invoke-RestMethod -Method Post "$ApiBase/auth/dev-token?role=viewer"
@@ -42,11 +54,12 @@ try {
   Assert-True "Viewer blocked apply" $true
 }
 
+$phone = "+550000000"
 $eid = [guid]::NewGuid().ToString()
 $evId = [guid]::NewGuid().ToString()
 $trId = [guid]::NewGuid().ToString()
 
-Invoke-RestMethod -Method Post "$ApiBase/entities/upsert" -Headers $authOwner -Body (@{id=$eid;type='lead';full_name='Teste';contact_phone='+550000000'} | ConvertTo-Json)
+Invoke-RestMethod -Method Post "$ApiBase/entities/upsert" -Headers $authOwner -Body (@{id=$eid;type='lead';full_name='Teste';contact_phone=$phone} | ConvertTo-Json)
 Invoke-RestMethod -Method Post "$ApiBase/events/upsert" -Headers $authOwner -Body (@{id=$evId;entity_id=$eid;status='scheduled';scheduled_for=$null} | ConvertTo-Json)
 Invoke-RestMethod -Method Post "$ApiBase/transactions/upsert" -Headers $authOwner -Body (@{id=$trId;event_id=$evId;amount='100';type='income';status='pending'} | ConvertTo-Json)
 
@@ -57,6 +70,39 @@ Assert-True "Sync pull transactions" ($pull.changes.transactions.Count -ge 1)
 
 $triage = Invoke-RestMethod -Method Post "$ApiBase/ai/triage" -Headers $authOwner -Body (@{text='confirmo presença'} | ConvertTo-Json)
 Assert-True "AI fallback triage" ($triage.intent -eq 'confirm')
+
+$block = Invoke-RestMethod -Method Post "$ApiBase/ai/block-action" -Headers $authOwner -Body (@{action='confirm';text='confirmo';entity_id=$eid;event_id=$evId;source='e2e'} | ConvertTo-Json)
+Assert-True "AI block action confirm" ($block.next_status -eq 'confirmed')
+
+$envPath = "infra/.env"
+$secret = Get-EnvValue $envPath "WEBHOOK_HMAC_SECRET" "change_this_secret"
+$msgId = [guid]::NewGuid().ToString()
+$payloadObj = @{ external_message_id=$msgId; phone=$phone; text='confirmo'; timestamp=(Get-Date).ToUniversalTime().ToString('o'); raw=@{} }
+$payload = $payloadObj | ConvertTo-Json -Depth 5 -Compress
+$ts = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+$toSign = "$ts.$payload"
+$hmac = New-Object System.Security.Cryptography.HMACSHA256
+$hmac.Key = [Text.Encoding]::UTF8.GetBytes($secret)
+$sigBytes = $hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($toSign))
+$signature = -join ($sigBytes | ForEach-Object { $_.ToString('x2') })
+
+$headersWebhook = @{
+  "content-type" = "application/json"
+  "x-webhook-timestamp" = "$ts"
+  "x-webhook-signature" = $signature
+}
+
+$webhookOk = $false
+$webhookStatusUpdate = $false
+try {
+  $inbound = Invoke-RestMethod -Method Post "$ApiBase/webhooks/whatsapp/inbound" -Headers $headersWebhook -Body $payload
+  $webhookOk = ($inbound.ok -eq $true)
+  $webhookStatusUpdate = ($inbound.status_updated.to -eq 'confirmed')
+} catch {
+  $webhookOk = $false
+}
+Assert-True "Webhook inbound signed" $webhookOk
+Assert-True "Webhook updates event status" $webhookStatusUpdate
 
 Write-Host ""
 Write-Host "TOTAL PASS: $pass" -ForegroundColor Green
