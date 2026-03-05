@@ -11,12 +11,20 @@ import hashlib
 import time
 import uuid
 import jwt
+import redis
 from core.config import settings
 from core.ai_fallback import classify_intent
 
 app = FastAPI(title=settings.app_name)
 engine = create_engine(settings.database_url, future=True)
 metadata = MetaData()
+
+redis_client = None
+try:
+    redis_url = getattr(settings, "redis_url", None) or "redis://redis:6379/0"
+    redis_client = redis.Redis.from_url(redis_url, decode_responses=True)
+except Exception:
+    redis_client = None
 
 # --- Tables ---
 inbound_messages = Table(
@@ -242,6 +250,21 @@ def minute_bucket() -> int:
 
 def enforce_rate_limit(key: str, limit: int, bucket_map: dict[str, tuple[int, int]]):
     bucket = minute_bucket()
+
+    if redis_client is not None:
+      try:
+          rkey = f"rl:{key}:{bucket}"
+          count = int(redis_client.incr(rkey))
+          if count == 1:
+              redis_client.expire(rkey, 70)
+          if count > limit:
+              raise HTTPException(status_code=429, detail="rate_limit_exceeded")
+          return
+      except HTTPException:
+          raise
+      except Exception:
+          pass
+
     prev = bucket_map.get(key)
     if not prev or prev[0] != bucket:
         bucket_map[key] = (bucket, 1)
@@ -482,12 +505,24 @@ def verify_hmac(body: bytes, ts_header: str | None, sig_header: str | None):
         raise HTTPException(status_code=401, detail="invalid_webhook_signature")
 
     replay_key = f"{ts}:{sig_header}"
+
+    if redis_client is not None:
+        try:
+            rk = f"replay:{replay_key}"
+            if redis_client.exists(rk):
+                raise HTTPException(status_code=409, detail="webhook_replay_detected")
+            redis_client.setex(rk, settings.webhook_replay_window_seconds, "1")
+            return
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
     if replay_key in replay_cache:
         raise HTTPException(status_code=409, detail="webhook_replay_detected")
 
     replay_cache[replay_key] = now
 
-    # prune cache
     cutoff = now - settings.webhook_replay_window_seconds
     stale = [k for k, v in replay_cache.items() if v < cutoff]
     for k in stale:
@@ -497,12 +532,24 @@ def verify_hmac(body: bytes, ts_header: str | None, sig_header: str | None):
 @app.on_event("startup")
 def startup():
     metadata.create_all(engine)
-    # lightweight migration for existing DBs
+
+    migrations = [
+        (
+            "2026_03_05_add_source_origin_finance_meta",
+            "ALTER TABLE finance_entry_meta ADD COLUMN IF NOT EXISTS source_origin TEXT DEFAULT 'manual_dashboard'",
+        ),
+    ]
+
     with engine.begin() as conn:
-        try:
-            conn.execute(text("ALTER TABLE finance_entry_meta ADD COLUMN source_origin TEXT DEFAULT 'manual_dashboard'"))
-        except Exception:
-            pass
+        conn.execute(text("CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"))
+
+    for mid, sql in migrations:
+        with engine.begin() as conn:
+            exists = conn.execute(text("SELECT id FROM schema_migrations WHERE id=:id"), {"id": mid}).fetchone()
+            if exists:
+                continue
+            conn.execute(text(sql))
+            conn.execute(text("INSERT INTO schema_migrations (id, applied_at) VALUES (:id,:ts)"), {"id": mid, "ts": now_iso()})
 
 
 @app.get("/health")
@@ -1273,6 +1320,33 @@ def leads_classifications(_claims: dict = Depends(require_roles({"owner", "opera
             "human_review_pending": pending_hr.fetchone()[0],
         },
     }
+
+
+@app.get("/human-review/list")
+def human_review_list(
+    status: str = "pending",
+    limit: int = Query(default=100, ge=1, le=500),
+    _claims: dict = Depends(require_roles({"owner", "operator", "viewer"})),
+):
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text("SELECT id, source, reference_id, text, status, created_at FROM human_review_queue WHERE status=:s ORDER BY created_at DESC LIMIT :l"),
+            {"s": status, "l": limit},
+        ).mappings().all()
+    return {"ok": True, "items": [dict(r) for r in rows]}
+
+
+@app.post("/human-review/{item_id}/resolve")
+def human_review_resolve(item_id: str, decision: str = "resolved", _claims: dict = Depends(require_roles({"owner", "operator"}))):
+    if decision not in {"resolved", "ignored"}:
+        raise HTTPException(status_code=400, detail="invalid_decision")
+    with engine.begin() as conn:
+        row = conn.execute(text("SELECT id, status FROM human_review_queue WHERE id=:id"), {"id": item_id}).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="item_not_found")
+        conn.execute(text("UPDATE human_review_queue SET status=:s WHERE id=:id"), {"s": decision, "id": item_id})
+        write_audit(conn, "human_review_resolve", "human_review_queue", item_id, {"decision": decision})
+    return {"ok": True, "id": item_id, "status": decision}
 
 
 @app.post("/documents/generate")

@@ -33,6 +33,7 @@ class Settings(BaseModel):
     rate_limit_ip_per_min: int = int(os.getenv("RATE_LIMIT_IP_PER_MIN", "60"))
     rate_limit_token_per_min: int = int(os.getenv("RATE_LIMIT_TOKEN_PER_MIN", "120"))
 
+    redis_url: str = os.getenv("REDIS_URL", "redis://redis:6379/0")
     baileys_internal_token: str = os.getenv("BAILEYS_INTERNAL_TOKEN", "change_internal_token")
 
 
