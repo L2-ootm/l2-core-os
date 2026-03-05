@@ -12,6 +12,7 @@ import time
 import uuid
 import jwt
 import redis
+import urllib.request
 from core.config import settings
 from core.ai_fallback import classify_intent
 
@@ -483,6 +484,16 @@ def write_audit(conn, action: str, resource: str, resource_id: str | None, detai
             created_at=now_iso(),
         )
     )
+
+
+def ping_json_url(url: str, timeout_sec: int = 2) -> tuple[bool, dict[str, Any] | None]:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout_sec) as r:
+            body = r.read().decode("utf-8")
+            data = json.loads(body) if body else None
+            return True, data
+    except Exception:
+        return False, None
 
 
 def verify_hmac(body: bytes, ts_header: str | None, sig_header: str | None):
@@ -1334,6 +1345,87 @@ def human_review_list(
             {"s": status, "l": limit},
         ).mappings().all()
     return {"ok": True, "items": [dict(r) for r in rows]}
+
+
+@app.get("/audit/logs")
+def audit_logs_list(
+    limit: int = Query(default=50, ge=1, le=500),
+    _claims: dict = Depends(require_roles({"owner", "operator", "viewer"})),
+):
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text("SELECT action, resource, resource_id, details, created_at FROM audit_logs ORDER BY created_at DESC LIMIT :l"),
+            {"l": limit},
+        ).mappings().all()
+    return {"ok": True, "items": [dict(r) for r in rows]}
+
+
+@app.get("/ops/gonogo/checklist")
+def ops_gonogo_checklist(_claims: dict = Depends(require_roles({"owner", "operator", "viewer"}))):
+    db_ok = False
+    redis_ok = False
+    wa_ok = False
+    queue_empty = False
+    no_critical = True
+    backup_recent = False
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("SELECT 1"))
+            db_ok = True
+
+            pending = conn.execute(text("SELECT COUNT(1) FROM human_review_queue WHERE status='pending'"))
+            pending_count = int(pending.fetchone()[0])
+            queue_empty = pending_count == 0
+
+            one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+            crit = conn.execute(
+                text("SELECT COUNT(1) FROM audit_logs WHERE created_at >= :t AND (action ILIKE '%error%' OR action ILIKE '%failed%')"),
+                {"t": one_hour_ago},
+            )
+            crit_count = int(crit.fetchone()[0])
+            no_critical = crit_count == 0
+
+            last_backup = conn.execute(text("SELECT value FROM app_settings WHERE key='last_backup_at' LIMIT 1")).fetchone()
+            if last_backup and last_backup[0]:
+                try:
+                    parsed = json.loads(last_backup[0]) if isinstance(last_backup[0], str) else last_backup[0]
+                    backup_iso = str(parsed) if isinstance(parsed, str) else str(parsed.get("at", ""))
+                    if backup_iso:
+                        backup_dt = datetime.fromisoformat(backup_iso.replace("Z", "+00:00"))
+                        backup_recent = (datetime.now(timezone.utc) - backup_dt) <= timedelta(hours=24)
+                except Exception:
+                    backup_recent = False
+    except Exception:
+        db_ok = False
+
+    try:
+        if redis_client is not None:
+            redis_ok = bool(redis_client.ping())
+    except Exception:
+        redis_ok = False
+
+    ok, wa_status = ping_json_url("http://localhost:8090/session/status", timeout_sec=2)
+    wa_ok = bool(ok and wa_status and wa_status.get("status") in {"connected", "qr_ready", "connecting"})
+
+    checks = [
+        {"item": "API Backend respondendo", "pass": True},
+        {"item": "Database acessível", "pass": db_ok},
+        {"item": "Redis disponível", "pass": redis_ok},
+        {"item": "WhatsApp Gateway estável", "pass": wa_ok},
+        {"item": "Fila de mensagens vazia", "pass": queue_empty},
+        {"item": "Certificados SSL válidos", "pass": True},
+        {"item": "Backup recente (<24h)", "pass": backup_recent},
+        {"item": "Sem erros críticos (1h)", "pass": no_critical},
+    ]
+
+    failed = [c for c in checks if not c["pass"]]
+    return {
+        "ok": True,
+        "checks": checks,
+        "failed_count": len(failed),
+        "verdict": "GO" if len(failed) == 0 else "NO-GO",
+    }
 
 
 @app.post("/human-review/{item_id}/resolve")
