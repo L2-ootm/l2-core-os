@@ -286,6 +286,7 @@ def get_runtime_whatsapp_policy() -> dict[str, Any]:
         "auto_reply_safe_only": bool(cfg.get("auto_reply_only_safe_intents", True)),
         "human_review_default": bool(cfg.get("human_review_default", True)),
         "auto_mark_read": bool(cfg.get("auto_mark_read", False)),
+        "auto_finance_from_whatsapp": str(cfg.get("auto_finance_from_whatsapp", "confirm_required")).lower(),
     }
 
 
@@ -351,6 +352,47 @@ def maybe_create_service_request(conn, entity_id: str | None, phone: str, intent
         )
     )
     return sr_id
+
+
+def parse_finance_signal(text_value: str) -> dict[str, Any] | None:
+    import re
+    txt = (text_value or "").lower().strip()
+    if not txt:
+        return None
+
+    has_payment_verb = any(k in txt for k in ["pagou", "pago", "recebi", "recebido", "pagamento"])
+    if not has_payment_verb:
+        return None
+
+    num_match = re.search(r"(\d+[\.,]?\d{0,2})", txt)
+    if not num_match:
+        return None
+
+    raw_amount = num_match.group(1).replace(",", ".")
+    try:
+        amount = str(round(float(raw_amount), 2))
+    except Exception:
+        return None
+
+    category = "outros"
+    if "consulta" in txt:
+        category = "consulta"
+    elif "procedimento" in txt:
+        category = "procedimento"
+    elif "retorno" in txt:
+        category = "retorno"
+    elif "exame" in txt:
+        category = "exame"
+
+    confidence = 0.9 if ("paciente" in txt and category != "outros") else 0.75
+
+    return {
+        "entry_type": "income",
+        "amount": amount,
+        "category": category,
+        "confidence": confidence,
+        "raw": text_value,
+    }
 
 
 def decode_auth_token(auth_header: str | None) -> dict[str, Any]:
@@ -473,7 +515,7 @@ def config_schema(_claims: dict = Depends(require_roles({"owner", "operator", "v
             "security": ["RBAC_ENABLED", "RATE_LIMIT_IP_PER_MIN", "RATE_LIMIT_TOKEN_PER_MIN"],
             "whatsapp": [
                 "BAILEYS_SESSION_NAME", "BAILEYS_QR_AUTO", "BAILEYS_WEBHOOK_TARGET",
-                "whatsapp_number_mode", "auto_mark_read", "auto_reply_only_safe_intents", "human_review_default"
+                "whatsapp_number_mode", "auto_mark_read", "auto_reply_only_safe_intents", "human_review_default", "auto_finance_from_whatsapp"
             ],
             "intelligence": ["FEATURE_INTENT_ROUTER", "INTENT_ROUTER_MODEL", "INTENT_CONFIDENCE_THRESHOLD"],
             "mobile": ["MOBILE_SYNC_ENABLED", "MOBILE_SYNC_POLL_SECONDS", "MOBILE_DEVICE_BINDING_REQUIRED"],
@@ -635,22 +677,65 @@ async def whatsapp_inbound(
                 write_audit(conn, "intent_status_update", "events", event["id"], {"intent": intent, "phone": payload.phone})
             else:
                 normalized = (payload.text or "").lower()
-                wants_new_service = any(k in normalized for k in ["novo serviço", "novo servico", "orçamento", "orcamento", "clareamento", "limpeza"])
-                if wants_new_service:
-                    service_request_id = maybe_create_service_request(conn, entity_id, payload.phone, "new_service", payload.text)
-                    write_audit(conn, "service_request_created", "service_requests", service_request_id, {"phone": payload.phone})
-                else:
+
+                finance_signal = parse_finance_signal(payload.text or "")
+                if finance_signal:
+                    mode = policy.get("auto_finance_from_whatsapp", "confirm_required")
+                    can_auto_post = mode == "auto_if_high_confidence" and finance_signal.get("confidence", 0) >= 0.9
+                    tx_status = "paid" if can_auto_post else "pending"
+
+                    tx_id = str(uuid.uuid4())
                     conn.execute(
-                        human_review_queue.insert().values(
-                            id=f"hr:{payload.external_message_id}",
-                            source="whatsapp_inbound",
-                            reference_id=payload.external_message_id,
-                            text=payload.text,
-                            status="pending",
+                        transactions.insert().values(
+                            id=tx_id,
+                            event_id=None,
+                            amount=finance_signal["amount"],
+                            type="income",
+                            status=tx_status,
+                            updated_at=now_iso(),
+                        )
+                    )
+                    conn.execute(
+                        finance_entry_meta.insert().values(
+                            tx_id=tx_id,
+                            source_kind="patient" if entity_id else "non_patient",
+                            entity_id=entity_id,
+                            category=finance_signal.get("category", "outros"),
+                            notes=finance_signal.get("raw"),
                             created_at=now_iso(),
                         )
                     )
-                    write_audit(conn, "human_review_queued", "inbound_messages", payload.external_message_id, {"intent": intent})
+                    write_audit(conn, "finance_whatsapp_ingested", "transactions", tx_id, {"mode": mode, "confidence": finance_signal.get("confidence")})
+
+                    if not can_auto_post:
+                        conn.execute(
+                            human_review_queue.insert().values(
+                                id=f"hr:finance:{payload.external_message_id}",
+                                source="finance_confirm_required",
+                                reference_id=tx_id,
+                                text=payload.text,
+                                status="pending",
+                                created_at=now_iso(),
+                            )
+                        )
+
+                else:
+                    wants_new_service = any(k in normalized for k in ["novo serviço", "novo servico", "orçamento", "orcamento", "clareamento", "limpeza"])
+                    if wants_new_service:
+                        service_request_id = maybe_create_service_request(conn, entity_id, payload.phone, "new_service", payload.text)
+                        write_audit(conn, "service_request_created", "service_requests", service_request_id, {"phone": payload.phone})
+                    else:
+                        conn.execute(
+                            human_review_queue.insert().values(
+                                id=f"hr:{payload.external_message_id}",
+                                source="whatsapp_inbound",
+                                reference_id=payload.external_message_id,
+                                text=payload.text,
+                                status="pending",
+                                created_at=now_iso(),
+                            )
+                        )
+                        write_audit(conn, "human_review_queued", "inbound_messages", payload.external_message_id, {"intent": intent})
 
     return {
         "ok": True,
