@@ -32,7 +32,8 @@ echo [8] Abrir dashboard web
 echo [9] Recriar .env (self-heal)
 echo [0] Sair
 echo.
-set /p op=Escolha uma opcao: 
+choice /c 1234567890 /n /m "Escolha uma opcao: "
+set op=%errorlevel%
 
 if "%op%"=="1" goto start_safe
 if "%op%"=="2" goto stop
@@ -43,7 +44,7 @@ if "%op%"=="6" goto go_nogo
 if "%op%"=="7" goto wa_recover
 if "%op%"=="8" goto open_web
 if "%op%"=="9" goto recreate_env
-if "%op%"=="0" goto end
+if "%op%"=="10" goto end
 goto menu
 
 :start_safe
