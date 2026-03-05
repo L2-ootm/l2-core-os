@@ -135,7 +135,7 @@ goto menu
 
 :open_web
 echo [INFO] Abrindo dashboard principal (Lovable UI)...
-set UI_DIR=%PROJECT_ROOT%\ui-lovable-b5ec4413
+set UI_DIR=%PROJECT_ROOT%\apps\web-ui
 
 rem 1) Se UI moderna ja estiver rodando (vite 8080), abre direto.
 powershell -NoProfile -Command "try{(Invoke-WebRequest -UseBasicParsing 'http://localhost:8080' -TimeoutSec 2) > $null; exit 0}catch{exit 1}"
