@@ -140,6 +140,7 @@ finance_entry_meta = Table(
     metadata,
     Column("tx_id", String, primary_key=True),
     Column("source_kind", String, nullable=False),
+    Column("source_origin", String, nullable=False),  # manual_dashboard|whatsapp_ai|automation
     Column("entity_id", String, nullable=True),
     Column("category", String, nullable=False),
     Column("notes", Text, nullable=True),
@@ -354,6 +355,19 @@ def maybe_create_service_request(conn, entity_id: str | None, phone: str, intent
     return sr_id
 
 
+def is_undo_last_ai_finance_command(text_value: str) -> bool:
+    t = (text_value or "").strip().lower()
+    keys = [
+        "desfazer ultimo lancamento",
+        "desfazer último lançamento",
+        "desfazer último pagamento",
+        "desfazer ultimo pagamento",
+        "desfazer lancamento ia",
+        "undo ultimo lancamento",
+    ]
+    return any(k in t for k in keys)
+
+
 def parse_finance_signal(text_value: str) -> dict[str, Any] | None:
     import re
     txt = (text_value or "").lower().strip()
@@ -483,6 +497,12 @@ def verify_hmac(body: bytes, ts_header: str | None, sig_header: str | None):
 @app.on_event("startup")
 def startup():
     metadata.create_all(engine)
+    # lightweight migration for existing DBs
+    with engine.begin() as conn:
+        try:
+            conn.execute(text("ALTER TABLE finance_entry_meta ADD COLUMN source_origin TEXT DEFAULT 'manual_dashboard'"))
+        except Exception:
+            pass
 
 
 @app.get("/health")
@@ -621,6 +641,7 @@ async def whatsapp_inbound(
         # Modo número principal: conservador por padrão.
         is_primary_mode = policy.get("number_mode") == "primary"
         safe_intent = intent in {"confirm", "cancel", "reschedule"}
+        undo_processed = None
 
         # Se não está na agenda nem no banco, não automatiza; manda para revisão.
         if phone_profile["classification"] == "unknown":
@@ -636,6 +657,37 @@ async def whatsapp_inbound(
             )
             write_audit(conn, "unknown_phone_queued", "inbound_messages", payload.external_message_id, {"phone": payload.phone})
         else:
+            # Comando por WhatsApp: desfazer último lançamento criado pela IA
+            if is_undo_last_ai_finance_command(payload.text or ""):
+                last_ai = conn.execute(
+                    text("""
+                        SELECT t.id, t.status
+                        FROM transactions t
+                        JOIN finance_entry_meta fm ON fm.tx_id = t.id
+                        WHERE fm.source_origin = 'whatsapp_ai' AND t.status IN ('pending','paid')
+                        ORDER BY t.updated_at DESC
+                        LIMIT 1
+                    """)
+                ).fetchone()
+                if last_ai:
+                    conn.execute(text("UPDATE transactions SET status='reversed', updated_at=:u WHERE id=:id"), {"u": now_iso(), "id": last_ai[0]})
+                    write_audit(conn, "finance_undo_last_ai", "transactions", last_ai[0], {"via": "whatsapp"})
+                    undo_processed = {"tx_id": last_ai[0], "from": last_ai[1], "to": "reversed"}
+                else:
+                    undo_processed = {"tx_id": None, "reason": "no_ai_transaction_found"}
+
+                return {
+                    "ok": True,
+                    "deduplicated": False,
+                    "external_message_id": payload.external_message_id,
+                    "intent": "undo_finance",
+                    "status_updated": None,
+                    "phone_profile": phone_profile,
+                    "service_request_id": None,
+                    "undo": undo_processed,
+                    "policy": policy,
+                }
+
             next_status = None
             if intent == "confirm":
                 next_status = "confirmed"
@@ -699,6 +751,7 @@ async def whatsapp_inbound(
                         finance_entry_meta.insert().values(
                             tx_id=tx_id,
                             source_kind="patient" if entity_id else "non_patient",
+                            source_origin="whatsapp_ai",
                             entity_id=entity_id,
                             category=finance_signal.get("category", "outros"),
                             notes=finance_signal.get("raw"),
@@ -994,7 +1047,7 @@ def transactions_list(
     sql = """
         SELECT t.id, t.event_id, t.amount, t.type, t.status, t.updated_at,
                ev.entity_id AS event_entity_id, e.full_name AS event_full_name,
-               fm.source_kind, fm.category, fm.notes, fm.entity_id AS meta_entity_id,
+               fm.source_kind, fm.source_origin, fm.category, fm.notes, fm.entity_id AS meta_entity_id,
                ep.full_name AS meta_full_name
         FROM transactions t
         LEFT JOIN events ev ON ev.id = t.event_id
@@ -1051,6 +1104,28 @@ def finance_categories(_claims: dict = Depends(require_roles({"owner", "operator
     }
 
 
+@app.post("/finance/undo-last-ai")
+def finance_undo_last_ai(_claims: dict = Depends(require_roles({"owner", "operator"}))):
+    with engine.begin() as conn:
+        last_ai = conn.execute(
+            text("""
+                SELECT t.id, t.status
+                FROM transactions t
+                JOIN finance_entry_meta fm ON fm.tx_id = t.id
+                WHERE fm.source_origin = 'whatsapp_ai' AND t.status IN ('pending','paid')
+                ORDER BY t.updated_at DESC
+                LIMIT 1
+            """)
+        ).fetchone()
+        if not last_ai:
+            return {"ok": True, "undone": False, "reason": "no_ai_transaction_found"}
+
+        conn.execute(text("UPDATE transactions SET status='reversed', updated_at=:u WHERE id=:id"), {"u": now_iso(), "id": last_ai[0]})
+        write_audit(conn, "finance_undo_last_ai", "transactions", last_ai[0], {"via": "api"})
+
+    return {"ok": True, "undone": True, "tx_id": last_ai[0], "from": last_ai[1], "to": "reversed"}
+
+
 @app.post("/finance/entries/create")
 def finance_entry_create(req: FinanceEntryCreateRequest, _claims: dict = Depends(require_roles({"owner", "operator"}))):
     if req.entry_type not in {"income", "expense"}:
@@ -1076,6 +1151,7 @@ def finance_entry_create(req: FinanceEntryCreateRequest, _claims: dict = Depends
             finance_entry_meta.insert().values(
                 tx_id=tx_id,
                 source_kind=req.source_kind,
+                source_origin="manual_dashboard",
                 entity_id=req.entity_id,
                 category=req.category,
                 notes=req.notes,
