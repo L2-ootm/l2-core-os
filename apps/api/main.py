@@ -135,6 +135,17 @@ document_jobs = Table(
     Column("created_at", String, nullable=False),
 )
 
+finance_entry_meta = Table(
+    "finance_entry_meta",
+    metadata,
+    Column("tx_id", String, primary_key=True),
+    Column("source_kind", String, nullable=False),
+    Column("entity_id", String, nullable=True),
+    Column("category", String, nullable=False),
+    Column("notes", Text, nullable=True),
+    Column("created_at", String, nullable=False),
+)
+
 # --- Models ---
 class InboundMessage(BaseModel):
     external_message_id: str
@@ -202,6 +213,16 @@ class DocumentGenerateRequest(BaseModel):
     event_id: str | None = None
     title: str
     body: str
+
+
+class FinanceEntryCreateRequest(BaseModel):
+    entry_type: str  # income|expense
+    amount: str
+    status: str = "pending"
+    source_kind: str = "non_patient"  # patient|non_patient
+    entity_id: str | None = None
+    category: str = "other"
+    notes: str | None = None
 
 
 # --- Security / Rate limit state ---
@@ -887,10 +908,14 @@ def transactions_list(
 ):
     sql = """
         SELECT t.id, t.event_id, t.amount, t.type, t.status, t.updated_at,
-               ev.entity_id, e.full_name
+               ev.entity_id AS event_entity_id, e.full_name AS event_full_name,
+               fm.source_kind, fm.category, fm.notes, fm.entity_id AS meta_entity_id,
+               ep.full_name AS meta_full_name
         FROM transactions t
         LEFT JOIN events ev ON ev.id = t.event_id
         LEFT JOIN entities e ON e.id = ev.entity_id
+        LEFT JOIN finance_entry_meta fm ON fm.tx_id = t.id
+        LEFT JOIN entities ep ON ep.id = fm.entity_id
         WHERE 1=1
     """
     params: dict[str, Any] = {"limit": limit}
@@ -930,6 +955,51 @@ def finance_summary(_claims: dict = Depends(require_roles({"owner", "operator", 
         "pending_total": round(pending, 2),
         "count": len(rows),
     }
+
+
+@app.get("/finance/categories")
+def finance_categories(_claims: dict = Depends(require_roles({"owner", "operator", "viewer"}))):
+    return {
+        "ok": True,
+        "income": ["consulta", "procedimento", "retorno", "exame", "outros"],
+        "expense": ["aluguel", "folha", "insumos", "laboratorio", "marketing", "outros"],
+    }
+
+
+@app.post("/finance/entries/create")
+def finance_entry_create(req: FinanceEntryCreateRequest, _claims: dict = Depends(require_roles({"owner", "operator"}))):
+    if req.entry_type not in {"income", "expense"}:
+        raise HTTPException(status_code=400, detail="invalid_entry_type")
+    if req.source_kind not in {"patient", "non_patient"}:
+        raise HTTPException(status_code=400, detail="invalid_source_kind")
+
+    tx_id = str(uuid.uuid4())
+    ts = now_iso()
+
+    with engine.begin() as conn:
+        conn.execute(
+            transactions.insert().values(
+                id=tx_id,
+                event_id=None,
+                amount=str(req.amount),
+                type=req.entry_type,
+                status=req.status,
+                updated_at=ts,
+            )
+        )
+        conn.execute(
+            finance_entry_meta.insert().values(
+                tx_id=tx_id,
+                source_kind=req.source_kind,
+                entity_id=req.entity_id,
+                category=req.category,
+                notes=req.notes,
+                created_at=ts,
+            )
+        )
+        write_audit(conn, "finance_entry_created", "transactions", tx_id, req.model_dump())
+
+    return {"ok": True, "tx_id": tx_id, "created_at": ts}
 
 
 @app.get("/ai/capability/policy")
