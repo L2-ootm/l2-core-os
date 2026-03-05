@@ -9,6 +9,10 @@ L2 CORE OS — INSTALAÇÃO RÁPIDA (Windows)
 - Entre em: infra\scripts
 - Clique 2x em: l2-setup.bat
 
+2.1) Operação diária simplificada
+- Execute: l2-control.bat
+- Use menu único para Start/Status/Logs/GO-NO-GO/Recover WhatsApp
+
 3) Acesso
 - Painel/Wizard: http://localhost:3000
 - API: http://localhost:8000/health
