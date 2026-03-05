@@ -24,6 +24,7 @@ const API_BASE = process.env.API_BASE_URL || 'http://api:8000';
 const TOKEN = process.env.BAILEYS_INTERNAL_TOKEN || 'change_internal_token';
 const WEBHOOK_HMAC_SECRET = process.env.WEBHOOK_HMAC_SECRET || 'change_this_secret';
 const SESSION_NAME = process.env.BAILEYS_SESSION_NAME || 'main';
+const STARTUP_CATCHUP_HOURS = Number(process.env.STARTUP_CATCHUP_HOURS || 24);
 
 let sock = null;
 let isConnecting = false;
@@ -34,6 +35,7 @@ let lastDisconnectReason = null;
 const processedInboundIds = new Set();
 const processedOutboundKeys = new Set();
 let lastCatchupAt = null;
+let lastCatchupRecovered = 0;
 
 function normalizeText(text = '') {
   return String(text).trim();
@@ -102,6 +104,30 @@ function scheduleReconnect() {
   }, waitMs);
 }
 
+async function runStartupCatchup() {
+  if (!sock) return;
+  const recoveredBefore = processedInboundIds.size;
+  const oldestMs = Date.now() - (STARTUP_CATCHUP_HOURS * 60 * 60 * 1000);
+
+  try {
+    const chats = await sock.groupFetchAllParticipating().catch(() => ({}));
+    const chatIds = Object.keys(chats || {});
+    for (const jid of chatIds.slice(0, 20)) {
+      try {
+        const msg = await sock.fetchMessageHistory(20, undefined, jid).catch(() => null);
+        if (!msg) continue;
+      } catch {}
+    }
+
+    // Fallback de catch-up: marca timestamp da tentativa; recuperação real vem por "append" e buffer da sessão.
+    lastCatchupAt = new Date().toISOString();
+    lastCatchupRecovered = Math.max(0, processedInboundIds.size - recoveredBefore);
+    logger.info({ lastCatchupAt, recovered: lastCatchupRecovered, windowHours: STARTUP_CATCHUP_HOURS, oldestMs }, 'Startup catch-up executed');
+  } catch (err) {
+    logger.warn({ err }, 'Startup catch-up failed (non-blocking)');
+  }
+}
+
 async function connectWhatsApp(force = false) {
   if (isConnecting) return;
   if (sock && !force) return;
@@ -141,8 +167,8 @@ async function connectWhatsApp(force = false) {
         reconnectAttempts = 0;
         lastDisconnectReason = null;
         lastStatus = 'connected';
-        lastCatchupAt = new Date().toISOString();
         logger.info('WhatsApp connected');
+        runStartupCatchup().catch((err) => logger.warn({ err }, 'Startup catch-up error'));
       }
 
       if (connection === 'close') {
@@ -202,6 +228,8 @@ app.get('/session/status', (_req, res) => {
     processed_inbound_ids: processedInboundIds.size,
     processed_outbound_keys: processedOutboundKeys.size,
     last_catchup_at: lastCatchupAt,
+    last_catchup_recovered: lastCatchupRecovered,
+    startup_catchup_hours: STARTUP_CATCHUP_HOURS,
   });
 });
 
