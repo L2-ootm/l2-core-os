@@ -103,10 +103,20 @@ echo --- Docker compose ps ---
 call :compose ps
 echo.
 echo --- API health ---
-powershell -NoProfile -Command "try{Invoke-RestMethod 'http://localhost:8000/health' | ConvertTo-Json -Depth 4}catch{$_|Out-String}"
+call :wait_http "http://localhost:8000/health" 12 2
+if errorlevel 1 (
+  echo [WARN] API ainda inicializando ou indisponivel.
+) else (
+  powershell -NoProfile -Command "try{Invoke-RestMethod 'http://localhost:8000/health' | ConvertTo-Json -Depth 4}catch{ '{\"ok\":false,\"error\":\"health_unavailable\"}' }"
+)
 echo.
 echo --- WhatsApp status ---
-powershell -NoProfile -Command "try{Invoke-RestMethod 'http://localhost:8090/session/status' | ConvertTo-Json -Depth 8}catch{$_|Out-String}"
+call :wait_http "http://localhost:8090/session/status" 12 2
+if errorlevel 1 (
+  echo [WARN] WhatsApp gateway ainda inicializando ou indisponivel.
+) else (
+  powershell -NoProfile -Command "try{Invoke-RestMethod 'http://localhost:8090/session/status' | ConvertTo-Json -Depth 8}catch{ '{\"ok\":false,\"error\":\"gateway_unavailable\"}' }"
+)
 call :maybe_pause
 goto menu
 
@@ -168,6 +178,21 @@ goto menu
 set CMD=%*
 docker compose -f "%COMPOSE_FILE%" --env-file "%ENV_FILE%" %CMD%
 exit /b %errorlevel%
+
+:wait_http
+set URL=%~1
+set MAX_TRIES=%~2
+set SLEEP_SEC=%~3
+if "%MAX_TRIES%"=="" set MAX_TRIES=10
+if "%SLEEP_SEC%"=="" set SLEEP_SEC=2
+set /a n=0
+:wait_http_loop
+set /a n+=1
+powershell -NoProfile -Command "try{(Invoke-WebRequest -UseBasicParsing '%URL%' -TimeoutSec 2) > $null; exit 0}catch{exit 1}"
+if %errorlevel% EQU 0 exit /b 0
+if %n% GEQ %MAX_TRIES% exit /b 1
+timeout /t %SLEEP_SEC% /nobreak >nul
+goto wait_http_loop
 
 :check_docker
 docker version >nul 2>&1
