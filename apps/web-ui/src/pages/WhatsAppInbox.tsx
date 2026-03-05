@@ -2,7 +2,7 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Send, Phone, Calendar, Search, Wifi, RefreshCw, Link2Off, QrCode } from "lucide-react";
 import { useEffect, useState } from "react";
-import { apiGet, waGet, waPost } from "@/lib/api";
+import { apiGet, waGet, waPost, apiPost, setAuthToken } from "@/lib/api";
 import { LoadingState, ErrorState, EmptyState } from "@/components/ui/async-state";
 
 const conversations = [
@@ -26,6 +26,20 @@ export default function WhatsAppInbox() {
   const [out, setOut] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showWaModal, setShowWaModal] = useState(false);
+  const [qrNonce, setQrNonce] = useState(Date.now());
+
+  async function ensureTokenIfNeeded(errMessage: string) {
+    if (!/401/.test(errMessage)) return false;
+    try {
+      const r = await apiPost<any>("/auth/dev-token?role=owner");
+      if (r?.token) {
+        setAuthToken(r.token);
+        return true;
+      }
+    } catch {}
+    return false;
+  }
 
   async function refresh() {
     setError(null);
@@ -40,12 +54,40 @@ export default function WhatsAppInbox() {
       setHumanQueue(h.items || []);
     } catch (e: any) {
       const msg = String(e.message || e);
+      const renewed = await ensureTokenIfNeeded(msg);
+      if (renewed) {
+        try {
+          const [w, c, h] = await Promise.all([
+            waGet<any>("/session/status"),
+            apiGet<any>("/ops/leads/classifications"),
+            apiGet<any>("/human-review/list?status=pending&limit=30"),
+          ]);
+          setWaStatus(w);
+          setClasses(c.classifications);
+          setHumanQueue(h.items || []);
+          return;
+        } catch {}
+      }
       setError(msg);
       setOut({ error: msg });
     }
   }
 
   useEffect(() => { refresh(); }, []);
+
+  async function openConnectModal() {
+    setLoading(true); setError(null);
+    try {
+      await waPost<any>("/session/connect");
+      setQrNonce(Date.now());
+      setShowWaModal(true);
+      await refresh();
+    } catch (e: any) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function action(kind: "connect" | "catchup" | "disconnect") {
     setLoading(true); setError(null);
@@ -92,11 +134,21 @@ export default function WhatsAppInbox() {
         <GlassCard className="text-xs">New lead: <b>{classes?.new_lead ?? 0}</b></GlassCard>
         <GlassCard className="text-xs">Unknown: <b>{classes?.unknown ?? 0}</b></GlassCard>
         <GlassCard className="text-xs">Human review: <b>{classes?.human_review_pending ?? 0}</b></GlassCard>
-        <GlassCard className="text-xs flex gap-2 items-center justify-end">
-          <button onClick={() => action("connect")} className="liquid-btn-ghost p-1.5"><Wifi className="h-3.5 w-3.5"/></button>
-          <button onClick={() => action("catchup")} className="liquid-btn-ghost p-1.5"><RefreshCw className="h-3.5 w-3.5"/></button>
-          <button onClick={() => action("disconnect")} className="liquid-btn-ghost p-1.5"><Link2Off className="h-3.5 w-3.5"/></button>
-          <button onClick={() => waGet<any>("/session/qr").then(setOut)} className="liquid-btn-ghost p-1.5"><QrCode className="h-3.5 w-3.5"/></button>
+        <GlassCard className="text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-[11px] text-muted-foreground">Conexão WhatsApp</div>
+              <div className="font-semibold">{waStatus?.status || "offline"}</div>
+            </div>
+            {waStatus?.status !== "connected" ? (
+              <button onClick={openConnectModal} className="liquid-btn liquid-btn-primary text-xs">Conectar via QR</button>
+            ) : (
+              <div className="flex gap-2">
+                <button onClick={() => action("catchup")} className="liquid-btn-ghost p-1.5"><RefreshCw className="h-3.5 w-3.5"/></button>
+                <button onClick={() => action("disconnect")} className="liquid-btn-ghost p-1.5"><Link2Off className="h-3.5 w-3.5"/></button>
+              </div>
+            )}
+          </div>
         </GlassCard>
       </div>
 
@@ -182,6 +234,22 @@ export default function WhatsAppInbox() {
           <EmptyState title="Nenhuma ação executada ainda na sessão WhatsApp." />
         )}
       </GlassCard>
+
+      {showWaModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <GlassCard className="w-full max-w-md space-y-3">
+            <h3 className="text-sm font-semibold">Conectar WhatsApp</h3>
+            <p className="text-xs text-muted-foreground">Escaneie o QR no celular da clínica.</p>
+            <div className="rounded-xl bg-white p-3 flex justify-center">
+              <img src={`/wa/session/qr.png?nonce=${qrNonce}`} alt="QR WhatsApp" className="w-64 h-64 object-contain" />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setQrNonce(Date.now())} className="liquid-btn text-xs">Atualizar QR</button>
+              <button onClick={() => setShowWaModal(false)} className="liquid-btn liquid-btn-primary text-xs">Fechar</button>
+            </div>
+          </GlassCard>
+        </div>
+      )}
     </div>
   );
 }
