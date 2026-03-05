@@ -16,11 +16,13 @@
 
 ## Fase 2 — Operação real
 - [ ] Wizard de configuração in-app
-- [ ] RBAC funcional (owner/operator/viewer)
-- [ ] Rate limiting por IP/token
+- [x] RBAC funcional (owner/operator/viewer)
+- [x] Rate limiting por IP/token
 - [ ] Intent Router Lite (LLM barato) com budget diário
 - [x] Endpoints base de configuração (`/config/schema|current|validate|apply`)
 - [x] Sessão Baileys base real (QR/status/reconnect/outbound)
+- [x] HMAC + anti-replay em webhook inbound
+- [x] E2E gate validation documentado
 
 ## Fase 3 — Android-first
 - [x] Contrato de sync incremental

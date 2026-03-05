@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import axios from 'axios';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
+import crypto from 'crypto';
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
@@ -21,6 +22,7 @@ const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const PORT = Number(process.env.BAILEYS_PORT || 8090);
 const API_BASE = process.env.API_BASE_URL || 'http://api:8000';
 const TOKEN = process.env.BAILEYS_INTERNAL_TOKEN || 'change_internal_token';
+const WEBHOOK_HMAC_SECRET = process.env.WEBHOOK_HMAC_SECRET || 'change_this_secret';
 const SESSION_NAME = process.env.BAILEYS_SESSION_NAME || 'main';
 
 let sock = null;
@@ -62,9 +64,15 @@ async function forwardInbound(msg) {
     raw: msg,
   };
 
-  await axios.post(`${API_BASE}/webhooks/whatsapp/inbound`, payload, {
+  const body = JSON.stringify(payload);
+  const ts = String(Math.floor(Date.now() / 1000));
+  const signature = crypto.createHmac('sha256', WEBHOOK_HMAC_SECRET).update(`${ts}.${body}`).digest('hex');
+
+  await axios.post(`${API_BASE}/webhooks/whatsapp/inbound`, body, {
     headers: {
       'x-internal-token': TOKEN,
+      'x-webhook-timestamp': ts,
+      'x-webhook-signature': signature,
       'content-type': 'application/json',
     },
     timeout: 15000,
@@ -192,9 +200,15 @@ app.post('/session/connect', async (_req, res) => {
 app.post('/simulate/inbound', async (req, res) => {
   try {
     const payload = req.body;
-    const r = await axios.post(`${API_BASE}/webhooks/whatsapp/inbound`, payload, {
+    const body = JSON.stringify(payload);
+    const ts = String(Math.floor(Date.now() / 1000));
+    const signature = crypto.createHmac('sha256', WEBHOOK_HMAC_SECRET).update(`${ts}.${body}`).digest('hex');
+
+    const r = await axios.post(`${API_BASE}/webhooks/whatsapp/inbound`, body, {
       headers: {
         'x-internal-token': TOKEN,
+        'x-webhook-timestamp': ts,
+        'x-webhook-signature': signature,
         'content-type': 'application/json',
       },
     });
