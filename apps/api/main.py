@@ -77,6 +77,28 @@ transactions = Table(
     Column("updated_at", String, nullable=False),
 )
 
+audit_logs = Table(
+    "audit_logs",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("action", String, nullable=False),
+    Column("resource", String, nullable=False),
+    Column("resource_id", String, nullable=True),
+    Column("details", Text, nullable=False),
+    Column("created_at", String, nullable=False),
+)
+
+human_review_queue = Table(
+    "human_review_queue",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("source", String, nullable=False),
+    Column("reference_id", String, nullable=True),
+    Column("text", Text, nullable=True),
+    Column("status", String, nullable=False),
+    Column("created_at", String, nullable=False),
+)
+
 # --- Models ---
 class InboundMessage(BaseModel):
     external_message_id: str
@@ -105,6 +127,14 @@ class MobilePushRequest(BaseModel):
 
 class AITriageRequest(BaseModel):
     text: str
+    source: str = "whatsapp"
+
+
+class AIBlockActionRequest(BaseModel):
+    action: str
+    text: str = ""
+    entity_id: str | None = None
+    event_id: str | None = None
     source: str = "whatsapp"
 
 
@@ -203,6 +233,38 @@ def require_roles(allowed: set[str]):
         return claims
 
     return dependency
+
+
+def resolve_entity_and_latest_event_by_phone(conn, phone: str):
+    row = conn.execute(
+        text("SELECT id FROM entities WHERE contact_phone = :p LIMIT 1"),
+        {"p": phone},
+    ).fetchone()
+    if not row:
+        return None, None
+
+    entity_id = row[0]
+    event_row = conn.execute(
+        text("SELECT id, status FROM events WHERE entity_id = :e ORDER BY updated_at DESC LIMIT 1"),
+        {"e": entity_id},
+    ).fetchone()
+
+    if not event_row:
+        return entity_id, None
+    return entity_id, {"id": event_row[0], "status": event_row[1]}
+
+
+def write_audit(conn, action: str, resource: str, resource_id: str | None, details: dict):
+    conn.execute(
+        audit_logs.insert().values(
+            id=f"{resource}:{resource_id or 'na'}:{int(time.time()*1000)}",
+            action=action,
+            resource=resource,
+            resource_id=resource_id,
+            details=json.dumps(details, ensure_ascii=False),
+            created_at=now_iso(),
+        )
+    )
 
 
 def verify_hmac(body: bytes, ts_header: str | None, sig_header: str | None):
@@ -334,6 +396,16 @@ async def whatsapp_inbound(
     except Exception:
         raise HTTPException(status_code=400, detail="invalid_payload")
 
+    normalized = (payload.text or "").strip().lower()
+    intent = "other"
+    if "confirm" in normalized or "confirmo" in normalized:
+        intent = "confirm"
+    elif "cancel" in normalized or "cancelo" in normalized:
+        intent = "cancel"
+    elif "remarc" in normalized or "reagend" in normalized:
+        intent = "reschedule"
+
+    status_updated = None
     with engine.begin() as conn:
         existing = conn.execute(
             text("SELECT id FROM inbound_messages WHERE external_message_id = :mid"),
@@ -354,20 +426,42 @@ async def whatsapp_inbound(
             )
         )
 
-    normalized = (payload.text or "").strip().lower()
-    intent = "other"
-    if "confirm" in normalized or "confirmo" in normalized:
-        intent = "confirm"
-    elif "cancel" in normalized or "cancelo" in normalized:
-        intent = "cancel"
-    elif "remarc" in normalized or "reagend" in normalized:
-        intent = "reschedule"
+        entity_id, event = resolve_entity_and_latest_event_by_phone(conn, payload.phone)
+        if event:
+            next_status = None
+            if intent == "confirm":
+                next_status = "confirmed"
+            elif intent == "cancel":
+                next_status = "canceled"
+            elif intent == "reschedule":
+                next_status = "reschedule_requested"
+
+            if next_status:
+                conn.execute(
+                    text("UPDATE events SET status = :s, updated_at = :u WHERE id = :id"),
+                    {"s": next_status, "u": now_iso(), "id": event["id"]},
+                )
+                status_updated = {"event_id": event["id"], "from": event["status"], "to": next_status}
+                write_audit(conn, "intent_status_update", "events", event["id"], {"intent": intent, "phone": payload.phone})
+            else:
+                conn.execute(
+                    human_review_queue.insert().values(
+                        id=f"hr:{payload.external_message_id}",
+                        source="whatsapp_inbound",
+                        reference_id=payload.external_message_id,
+                        text=payload.text,
+                        status="pending",
+                        created_at=now_iso(),
+                    )
+                )
+                write_audit(conn, "human_review_queued", "inbound_messages", payload.external_message_id, {"intent": intent})
 
     return {
         "ok": True,
         "deduplicated": False,
         "external_message_id": payload.external_message_id,
         "intent": intent,
+        "status_updated": status_updated,
     }
 
 
@@ -576,4 +670,57 @@ def ai_triage(req: AITriageRequest, _claims: dict = Depends(require_roles({"owne
         "confidence": r.confidence,
         "route": r.route,
         "source": req.source,
+    }
+
+
+@app.post("/ai/block-action")
+def ai_block_action(req: AIBlockActionRequest, _claims: dict = Depends(require_roles({"owner", "operator"}))):
+    action = (req.action or "").strip().lower()
+    allowed = {"confirm", "cancel", "reschedule", "triage"}
+    if action not in allowed:
+        raise HTTPException(status_code=400, detail="invalid_action")
+
+    triage = classify_intent(req.text or "")
+    next_status = None
+    route = triage.route
+
+    if action == "confirm":
+        next_status = "confirmed"
+    elif action == "cancel":
+        next_status = "canceled"
+    elif action == "reschedule":
+        next_status = "reschedule_requested"
+    elif action == "triage":
+        route = "human_review"
+
+    updated_event = None
+    with engine.begin() as conn:
+        target_event_id = req.event_id
+
+        if not target_event_id and req.entity_id:
+            row = conn.execute(text("SELECT id FROM events WHERE entity_id=:e ORDER BY updated_at DESC LIMIT 1"), {"e": req.entity_id}).fetchone()
+            if row:
+                target_event_id = row[0]
+
+        if next_status and target_event_id:
+            old = conn.execute(text("SELECT status FROM events WHERE id=:id"), {"id": target_event_id}).fetchone()
+            old_status = old[0] if old else None
+            conn.execute(text("UPDATE events SET status=:s, updated_at=:u WHERE id=:id"), {"s": next_status, "u": now_iso(), "id": target_event_id})
+            updated_event = {"event_id": target_event_id, "from": old_status, "to": next_status}
+            write_audit(conn, "ai_block_action", "events", target_event_id, {"action": action, "source": req.source})
+
+        if action == "triage" or route == "human_review":
+            qid = f"hr:block:{int(time.time()*1000)}"
+            conn.execute(human_review_queue.insert().values(id=qid, source=req.source, reference_id=target_event_id, text=req.text, status="pending", created_at=now_iso()))
+            write_audit(conn, "ai_block_triage", "human_review_queue", qid, {"action": action})
+
+    return {
+        "ok": True,
+        "mode": "functional_blocks",
+        "action": action,
+        "intent": triage.intent,
+        "confidence": triage.confidence,
+        "route": route,
+        "next_status": next_status,
+        "updated_event": updated_event,
     }

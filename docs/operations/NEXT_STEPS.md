@@ -19,10 +19,12 @@
 - [x] RBAC funcional (owner/operator/viewer)
 - [x] Rate limiting por IP/token
 - [x] Intent Router Lite (fallback determinístico)
+- [x] IA funcional por blocos (confirm/cancel/reschedule/triage)
 - [x] Endpoints base de configuração (`/config/schema|current|validate|apply`)
 - [x] Sessão Baileys base real (QR/status/reconnect/outbound)
 - [x] HMAC + anti-replay em webhook inbound
-- [x] E2E gate validation documentado
+- [x] Automação inbound -> status do evento
+- [x] E2E gate validation documentado e executado (GO)
 
 ## Fase 3 — Android-first
 - [x] Contrato de sync incremental
