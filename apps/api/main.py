@@ -10,6 +10,7 @@ import hashlib
 import time
 import jwt
 from core.config import settings
+from core.ai_fallback import classify_intent
 
 app = FastAPI(title=settings.app_name)
 engine = create_engine(settings.database_url, future=True)
@@ -69,6 +70,11 @@ class MobilePushRequest(BaseModel):
     sync_batch_id: str
     device_id: str
     changes: list[MobileChange] = Field(default_factory=list)
+
+
+class AITriageRequest(BaseModel):
+    text: str
+    source: str = "whatsapp"
 
 
 # --- Security / Rate limit state ---
@@ -358,4 +364,29 @@ def mobile_sync_push(req: MobilePushRequest, _claims: dict = Depends(require_rol
         "deduplicated": False,
         "sync_batch_id": req.sync_batch_id,
         "accepted_changes": len(req.changes),
+    }
+
+
+@app.get("/ai/capability/policy")
+def ai_capability_policy(_claims: dict = Depends(require_roles({"owner", "operator", "viewer"}))):
+    return {
+        "tiers": {
+            "A": {"ram_gb_min": 16, "mode": "local_llm_7b"},
+            "B": {"ram_gb_min": 8, "mode": "local_llm_3b"},
+            "C": {"ram_gb_min": 0, "mode": "deterministic_fallback"},
+        },
+        "slo": {"p95_ms_max": 2500},
+    }
+
+
+@app.post("/ai/triage")
+def ai_triage(req: AITriageRequest, _claims: dict = Depends(require_roles({"owner", "operator"}))):
+    r = classify_intent(req.text)
+    return {
+        "ok": True,
+        "mode": "deterministic_fallback",
+        "intent": r.intent,
+        "confidence": r.confidence,
+        "route": r.route,
+        "source": req.source,
     }
