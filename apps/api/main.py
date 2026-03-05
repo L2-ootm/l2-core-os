@@ -876,6 +876,24 @@ def inbound_summary(_claims: dict = Depends(require_roles({"owner", "operator", 
     }
 
 
+@app.get("/ops/leads/classifications")
+def leads_classifications(_claims: dict = Depends(require_roles({"owner", "operator", "viewer"}))):
+    with engine.begin() as conn:
+        known = conn.execute(text("SELECT COUNT(1) FROM phone_identity WHERE classification='known_client'"))
+        new_leads = conn.execute(text("SELECT COUNT(1) FROM phone_identity WHERE classification='new_lead'"))
+        unknown = conn.execute(text("SELECT COUNT(1) FROM phone_identity WHERE classification='unknown'"))
+        pending_hr = conn.execute(text("SELECT COUNT(1) FROM human_review_queue WHERE status='pending'"))
+    return {
+        "ok": True,
+        "classifications": {
+            "known_client": known.fetchone()[0],
+            "new_lead": new_leads.fetchone()[0],
+            "unknown": unknown.fetchone()[0],
+            "human_review_pending": pending_hr.fetchone()[0],
+        },
+    }
+
+
 @app.post("/documents/generate")
 def documents_generate(req: DocumentGenerateRequest, _claims: dict = Depends(require_roles({"owner", "operator"}))):
     try:

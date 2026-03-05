@@ -4,6 +4,7 @@ import axios from 'axios';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import crypto from 'crypto';
+import fs from 'fs/promises';
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
@@ -102,6 +103,15 @@ function scheduleReconnect() {
   setTimeout(() => {
     connectWhatsApp().catch((err) => logger.error({ err }, 'Reconnect failed'));
   }, waitMs);
+}
+
+async function clearSessionAuth() {
+  try {
+    await fs.rm(`./.auth/${SESSION_NAME}`, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function runStartupCatchup() {
@@ -230,6 +240,8 @@ app.get('/session/status', (_req, res) => {
     last_catchup_at: lastCatchupAt,
     last_catchup_recovered: lastCatchupRecovered,
     startup_catchup_hours: STARTUP_CATCHUP_HOURS,
+    can_disconnect: true,
+    can_connect_new_number: true,
   });
 });
 
@@ -241,6 +253,35 @@ app.get('/session/qr', (_req, res) => {
 app.post('/session/connect', async (_req, res) => {
   connectWhatsApp(true).catch((err) => logger.error({ err }, 'manual connect failed'));
   res.json({ ok: true, started: true });
+});
+
+app.post('/session/catchup', async (_req, res) => {
+  try {
+    await runStartupCatchup();
+    res.json({ ok: true, last_catchup_at: lastCatchupAt, recovered: lastCatchupRecovered });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: 'catchup_failed' });
+  }
+});
+
+app.post('/session/disconnect', async (req, res) => {
+  const clearAuth = !!req.body?.clearAuth;
+  try {
+    if (sock) {
+      try { await sock.logout(); } catch {}
+      sock = null;
+    }
+    lastStatus = 'disconnected';
+    if (clearAuth) {
+      await clearSessionAuth();
+      processedInboundIds.clear();
+      processedOutboundKeys.clear();
+      lastQr = null;
+    }
+    res.json({ ok: true, disconnected: true, clearAuth, can_connect_new_number: true });
+  } catch {
+    res.status(500).json({ ok: false, error: 'disconnect_failed' });
+  }
 });
 
 app.post('/simulate/inbound', async (req, res) => {

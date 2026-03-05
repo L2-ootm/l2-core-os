@@ -34,8 +34,10 @@ Referências:
 Recursos:
 - conexão real com persistência de sessão
 - QR/status/reconnect
+- catch-up de startup + catch-up manual
 - inbound forwarding assinado
-- outbound send
+- outbound send idempotente
+- disconnect/reset auth para troca de número
 
 Referências:
 - `docs/whatsapp/BAILEYS_INTEGRATION.md`
@@ -45,7 +47,7 @@ Referências:
 Camadas:
 - `.env` (bootstrap e segredos)
 - `app_settings` (overrides)
-- wizard (MVP web)
+- dashboard/wizard (MVP web, com gestão integrada)
 
 Endpoints:
 - `GET /config/schema`
