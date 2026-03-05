@@ -1,26 +1,21 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 
-set NON_INTERACTIVE=0
+rem ==========================
+rem L2 CORE OS Control Center
+rem ==========================
 
-if /i "%~1"=="--start" set NON_INTERACTIVE=1
-if /i "%~1"=="--stop" set NON_INTERACTIVE=1
-if /i "%~1"=="--restart" set NON_INTERACTIVE=1
-if /i "%~1"=="--status" set NON_INTERACTIVE=1
-if /i "%~1"=="--go" set NON_INTERACTIVE=1
-if /i "%~1"=="--wa-recover" set NON_INTERACTIVE=1
-if /i "%~1"=="--recreate-env" set NON_INTERACTIVE=1
+call :init_paths
+if errorlevel 1 goto :fatal
 
-call :detect_paths
-if errorlevel 1 goto fatal
-
-if /i "%~1"=="--start" goto start_safe
-if /i "%~1"=="--stop" goto stop
-if /i "%~1"=="--restart" goto restart_safe
-if /i "%~1"=="--status" goto status
-if /i "%~1"=="--go" goto go_nogo
-if /i "%~1"=="--wa-recover" goto wa_recover
-if /i "%~1"=="--recreate-env" goto recreate_env
+if /i "%~1"=="--start" (call :action_start & exit /b %errorlevel%)
+if /i "%~1"=="--stop" (call :action_stop & exit /b %errorlevel%)
+if /i "%~1"=="--restart" (call :action_restart & exit /b %errorlevel%)
+if /i "%~1"=="--status" (call :action_status & exit /b %errorlevel%)
+if /i "%~1"=="--go" (call :action_gonogo & exit /b %errorlevel%)
+if /i "%~1"=="--wa-recover" (call :action_wa_recover & exit /b %errorlevel%)
+if /i "%~1"=="--open" (call :action_open_dashboard & exit /b %errorlevel%)
+if /i "%~1"=="--recreate-env" (call :action_recreate_env & exit /b %errorlevel%)
 
 :menu
 cls
@@ -39,173 +34,53 @@ echo [8] Abrir dashboard web
 echo [9] Recriar .env (self-heal)
 echo [0] Sair
 echo.
+set "op="
 set /p op=Escolha uma opcao (0-9) e pressione Enter: 
-set op=%op: =%
+set "op=%op: =%"
 
-if "%op%"=="1" goto start_safe
-if "%op%"=="2" goto stop
-if "%op%"=="3" goto restart_safe
-if "%op%"=="4" goto status
-if "%op%"=="5" goto logs
-if "%op%"=="6" goto go_nogo
-if "%op%"=="7" goto wa_recover
-if "%op%"=="8" goto open_web
-if "%op%"=="9" goto recreate_env
-if "%op%"=="0" goto end
+if "%op%"=="1" call :action_start & goto :pause_menu
+if "%op%"=="2" call :action_stop & goto :pause_menu
+if "%op%"=="3" call :action_restart & goto :pause_menu
+if "%op%"=="4" call :action_status & goto :pause_menu
+if "%op%"=="5" call :action_logs & goto :pause_menu
+if "%op%"=="6" call :action_gonogo & goto :pause_menu
+if "%op%"=="7" call :action_wa_recover & goto :pause_menu
+if "%op%"=="8" call :action_open_dashboard & goto :pause_menu
+if "%op%"=="9" call :action_recreate_env & goto :pause_menu
+if "%op%"=="0" goto :end
 
 echo [WARN] Opcao invalida: %op%
 timeout /t 1 /nobreak >nul
-goto menu
+goto :menu
 
-:start_safe
-call :check_docker
-if errorlevel 1 goto menu
-call :ensure_env
-if errorlevel 1 goto menu
-
-call :compose up -d
-if errorlevel 1 (
-  echo [ERRO] Falha ao subir stack. Tentando auto-recuperacao...
-  call :ensure_env
-  call :compose up -d
-)
-if errorlevel 1 (
-  echo [ERRO] Falha persistente ao subir stack.
-  echo [DIAG] docker compose ps:
-  call :compose ps
-  call :maybe_pause
-  goto menu
-)
-
-timeout /t 6 /nobreak >nul
-powershell -NoProfile -Command "try{(Invoke-RestMethod 'http://localhost:8000/health').ok}catch{$false}" >nul
-if errorlevel 1 (
-  echo [AVISO] API ainda inicializando.
-) else (
-  echo [OK] Stack iniciada com sucesso.
-)
-call :maybe_pause
-goto menu
-
-:stop
-call :check_docker
-if errorlevel 1 goto menu
-call :compose down
-echo [OK] Stack parada.
-call :maybe_pause
-goto menu
-
-:restart_safe
-call :check_docker
-if errorlevel 1 goto menu
-call :ensure_env
-if errorlevel 1 goto menu
-call :compose down
-call :compose up -d
-timeout /t 6 /nobreak >nul
-echo [OK] Restart concluido.
-call :maybe_pause
-goto menu
-
-:status
-call :check_docker
-if errorlevel 1 goto menu
-echo --- Docker compose ps ---
-call :compose ps
+:pause_menu
 echo.
-echo --- API health ---
-call :wait_http "http://localhost:8000/health" 12 2
-if errorlevel 1 (
-  echo [WARN] API ainda inicializando ou indisponivel.
-) else (
-  powershell -NoProfile -Command "try{Invoke-RestMethod 'http://localhost:8000/health' | ConvertTo-Json -Depth 4}catch{ '{\"ok\":false,\"error\":\"health_unavailable\"}' }"
-)
-echo.
-echo --- WhatsApp status ---
-call :wait_http "http://localhost:8090/session/status" 12 2
-if errorlevel 1 (
-  echo [WARN] WhatsApp gateway ainda inicializando ou indisponivel.
-) else (
-  powershell -NoProfile -Command "try{Invoke-RestMethod 'http://localhost:8090/session/status' | ConvertTo-Json -Depth 8}catch{ '{\"ok\":false,\"error\":\"gateway_unavailable\"}' }"
-)
-call :maybe_pause
-goto menu
+pause
+goto :menu
 
-:logs
-call :check_docker
-if errorlevel 1 goto menu
-echo [1] API  [2] Gateway  [3] DB
-set /p lg=Servico: 
-if "%lg%"=="1" call :compose logs api --tail 120
-if "%lg%"=="2" call :compose logs baileys-gateway --tail 120
-if "%lg%"=="3" call :compose logs db --tail 120
-call :maybe_pause
-goto menu
+:init_paths
+set "SCRIPT_DIR=%~dp0"
+if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 
-:go_nogo
-call :ensure_env
-if errorlevel 1 goto menu
-powershell -ExecutionPolicy Bypass -File "%E2E_SCRIPT%"
-call :maybe_pause
-goto menu
-
-:wa_recover
-powershell -NoProfile -Command "try{Invoke-RestMethod -Method Post 'http://localhost:8090/session/connect' | Out-Null}catch{}; Start-Sleep -Seconds 2; try{Invoke-RestMethod -Method Post 'http://localhost:8090/session/catchup' | ConvertTo-Json -Depth 8}catch{$_|Out-String}"
-call :maybe_pause
-goto menu
-
-:open_web
-echo [INFO] Abrindo dashboard principal (Lovable UI)...
-set UI_DIR=%PROJECT_ROOT%\apps\web-ui
-
-rem 1) Se UI moderna ja estiver rodando (vite 8080), abre direto.
-powershell -NoProfile -Command "try{(Invoke-WebRequest -UseBasicParsing 'http://localhost:8080' -TimeoutSec 2) > $null; exit 0}catch{exit 1}"
-if %errorlevel% EQU 0 (
-  start http://localhost:8080
-  goto menu
+set "PROJECT_ROOT=%SCRIPT_DIR%"
+if not exist "%PROJECT_ROOT%\infra\docker-compose.yml" set "PROJECT_ROOT=%SCRIPT_DIR%\.."
+if not exist "%PROJECT_ROOT%\infra\docker-compose.yml" (
+  echo [ERRO] Nao foi possivel localizar infra\docker-compose.yml
+  echo [DICA] Execute este script na raiz do projeto L2 CORE OS.
+  exit /b 1
 )
 
-rem 2) Se existe projeto UI, tenta iniciar Vite em nova janela.
-if exist "%UI_DIR%\package.json" (
-  echo [INFO] Iniciando UI moderna em http://localhost:8080 ...
-  start "L2 UI (Lovable)" cmd /k "cd /d "%UI_DIR%" && npm run dev"
-  timeout /t 4 /nobreak >nul
-  start http://localhost:8080
-  goto menu
-)
+for %%I in ("%PROJECT_ROOT%") do set "PROJECT_ROOT=%%~fI"
+set "COMPOSE_FILE=%PROJECT_ROOT%\infra\docker-compose.yml"
+set "ENV_FILE=%PROJECT_ROOT%\infra\.env"
+set "ENV_EXAMPLE=%PROJECT_ROOT%\infra\.env.example"
+set "E2E_SCRIPT=%PROJECT_ROOT%\infra\scripts\e2e-go-no-go.ps1"
+set "UI_DIR=%PROJECT_ROOT%\apps\web-ui"
 
-rem 3) Fallback para painel operacional tecnico.
-echo [WARN] UI Lovable nao encontrada. Abrindo painel tecnico em http://localhost:3000
-start http://localhost:3000
-goto menu
+cd /d "%PROJECT_ROOT%"
+exit /b 0
 
-:recreate_env
-if exist "%ENV_FILE%" del /f /q "%ENV_FILE%" >nul 2>&1
-call :ensure_env
-call :maybe_pause
-goto menu
-
-:compose
-set CMD=%*
-docker compose -f "%COMPOSE_FILE%" --env-file "%ENV_FILE%" %CMD%
-exit /b %errorlevel%
-
-:wait_http
-set URL=%~1
-set MAX_TRIES=%~2
-set SLEEP_SEC=%~3
-if "%MAX_TRIES%"=="" set MAX_TRIES=10
-if "%SLEEP_SEC%"=="" set SLEEP_SEC=2
-set /a n=0
-:wait_http_loop
-set /a n+=1
-powershell -NoProfile -Command "try{(Invoke-WebRequest -UseBasicParsing '%URL%' -TimeoutSec 2) > $null; exit 0}catch{exit 1}"
-if %errorlevel% EQU 0 exit /b 0
-if %n% GEQ %MAX_TRIES% exit /b 1
-timeout /t %SLEEP_SEC% /nobreak >nul
-goto wait_http_loop
-
-:check_docker
+:docker_ready
 docker version >nul 2>&1
 if %errorlevel% EQU 0 exit /b 0
 
@@ -214,22 +89,20 @@ if exist "C:\Program Files\Docker\Docker\Docker Desktop.exe" (
   start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 ) else (
   echo [ERRO] Docker Desktop nao encontrado.
-  call :maybe_pause
   exit /b 1
 )
 
 set /a tries=0
-:docker_wait
+:wait_docker
 set /a tries+=1
 timeout /t 3 /nobreak >nul
 docker version >nul 2>&1
 if %errorlevel% EQU 0 exit /b 0
 if %tries% GEQ 40 (
   echo [ERRO] Docker nao ficou pronto a tempo.
-  call :maybe_pause
   exit /b 1
 )
-goto docker_wait
+goto :wait_docker
 
 :ensure_env
 if exist "%ENV_FILE%" exit /b 0
@@ -264,42 +137,136 @@ echo [WARN] %ENV_EXAMPLE% nao encontrado. Gerando env minimo seguro...
   echo BAILEYS_SESSION_NAME=main
   echo BAILEYS_INTERNAL_TOKEN=change_internal_token
   echo STARTUP_CATCHUP_HOURS=24
+  echo AUTO_MARK_READ=false
+  echo AUTO_REPLY_ONLY_SAFE_INTENTS=true
+  echo HUMAN_REVIEW_DEFAULT=true
+  echo WHATSAPP_NUMBER_MODE=primary
+  echo AUTO_FINANCE_FROM_WHATSAPP=confirm_required
 ) > "%ENV_FILE%"
 
 echo [OK] %ENV_FILE% gerado com defaults.
 exit /b 0
 
-:detect_paths
-set SCRIPT_DIR=%~dp0
-set SCRIPT_DIR=%SCRIPT_DIR:~0,-1%
+:compose
+set "CMD=%*"
+docker compose -f "%COMPOSE_FILE%" --env-file "%ENV_FILE%" %CMD%
+exit /b %errorlevel%
 
-set PROJECT_ROOT=%SCRIPT_DIR%
-if not exist "%PROJECT_ROOT%\infra\docker-compose.yml" (
-  set PROJECT_ROOT=%SCRIPT_DIR%\..
+:wait_http
+set "URL=%~1"
+set "MAX_TRIES=%~2"
+set "SLEEP_SEC=%~3"
+if "%MAX_TRIES%"=="" set "MAX_TRIES=10"
+if "%SLEEP_SEC%"=="" set "SLEEP_SEC=2"
+set /a n=0
+:wait_http_loop
+set /a n+=1
+powershell -NoProfile -Command "try{(Invoke-WebRequest -UseBasicParsing '%URL%' -TimeoutSec 2) > $null; exit 0}catch{exit 1}"
+if %errorlevel% EQU 0 exit /b 0
+if %n% GEQ %MAX_TRIES% exit /b 1
+timeout /t %SLEEP_SEC% /nobreak >nul
+goto :wait_http_loop
+
+:action_start
+call :docker_ready || exit /b 1
+call :ensure_env || exit /b 1
+call :compose up -d || exit /b 1
+call :wait_http "http://localhost:8000/health" 15 2
+if errorlevel 1 (
+  echo [WARN] API ainda inicializando.
+) else (
+  echo [OK] API respondeu health.
 )
-if not exist "%PROJECT_ROOT%\infra\docker-compose.yml" (
-  echo [ERRO] Nao foi possivel localizar infra\docker-compose.yml
-  echo [DICA] Execute este script na raiz do projeto L2 CORE OS.
-  call :maybe_pause
+exit /b 0
+
+:action_stop
+call :docker_ready || exit /b 1
+call :compose down
+echo [OK] Stack parada.
+exit /b 0
+
+:action_restart
+call :docker_ready || exit /b 1
+call :ensure_env || exit /b 1
+call :compose down
+call :compose up -d
+echo [OK] Restart concluido.
+exit /b 0
+
+:action_status
+call :docker_ready || exit /b 1
+echo --- Docker compose ps ---
+call :compose ps
+echo.
+echo --- API health ---
+call :wait_http "http://localhost:8000/health" 12 2
+if errorlevel 1 (
+  echo [WARN] API ainda inicializando ou indisponivel.
+) else (
+  powershell -NoProfile -Command "Invoke-RestMethod 'http://localhost:8000/health' | ConvertTo-Json -Depth 4"
+)
+echo.
+echo --- WhatsApp status ---
+call :wait_http "http://localhost:8090/session/status" 12 2
+if errorlevel 1 (
+  echo [WARN] WhatsApp gateway ainda inicializando ou indisponivel.
+) else (
+  powershell -NoProfile -Command "Invoke-RestMethod 'http://localhost:8090/session/status' | ConvertTo-Json -Depth 8"
+)
+exit /b 0
+
+:action_logs
+call :docker_ready || exit /b 1
+echo [1] API  [2] Gateway  [3] DB
+set "lg="
+set /p lg=Servico: 
+if "%lg%"=="1" call :compose logs api --tail 120
+if "%lg%"=="2" call :compose logs baileys-gateway --tail 120
+if "%lg%"=="3" call :compose logs db --tail 120
+exit /b 0
+
+:action_gonogo
+call :ensure_env || exit /b 1
+if not exist "%E2E_SCRIPT%" (
+  echo [ERRO] Script GO/NO-GO nao encontrado: %E2E_SCRIPT%
   exit /b 1
 )
+powershell -ExecutionPolicy Bypass -File "%E2E_SCRIPT%"
+exit /b %errorlevel%
 
-for %%I in ("%PROJECT_ROOT%") do set PROJECT_ROOT=%%~fI
-set COMPOSE_FILE=%PROJECT_ROOT%\infra\docker-compose.yml
-set ENV_FILE=%PROJECT_ROOT%\infra\.env
-set ENV_EXAMPLE=%PROJECT_ROOT%\infra\.env.example
-set E2E_SCRIPT=%PROJECT_ROOT%\infra\scripts\e2e-go-no-go.ps1
-cd /d "%PROJECT_ROOT%"
+:action_wa_recover
+powershell -NoProfile -Command "try{Invoke-RestMethod -Method Post 'http://localhost:8090/session/connect' | Out-Null}catch{}; Start-Sleep -Seconds 2; try{Invoke-RestMethod -Method Post 'http://localhost:8090/session/catchup' | ConvertTo-Json -Depth 8}catch{$_|Out-String}"
 exit /b 0
 
-:maybe_pause
-if "%NON_INTERACTIVE%"=="1" exit /b 0
-pause
+:action_open_dashboard
+echo [INFO] Abrindo dashboard principal...
+
+call :wait_http "http://localhost:8080" 2 1
+if %errorlevel% EQU 0 (
+  start http://localhost:8080
+  exit /b 0
+)
+
+if exist "%UI_DIR%\package.json" (
+  echo [INFO] Iniciando UI principal em http://localhost:8080 ...
+  start "L2 UI (web-ui)" cmd /k "cd /d "%UI_DIR%" && npm run dev"
+  timeout /t 4 /nobreak >nul
+  start http://localhost:8080
+  exit /b 0
+)
+
+echo [WARN] UI principal nao encontrada. Abrindo painel tecnico em http://localhost:3000
+start http://localhost:3000
 exit /b 0
+
+:action_recreate_env
+if exist "%ENV_FILE%" del /f /q "%ENV_FILE%" >nul 2>&1
+call :ensure_env
+exit /b %errorlevel%
 
 :fatal
 echo [FATAL] Falha ao inicializar control center.
-call :maybe_pause
+pause
 exit /b 1
 
 :end
