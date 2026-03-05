@@ -394,6 +394,9 @@ def mobile_sync_pull(since: str | None = None, _claims: dict = Depends(require_r
 @app.post("/mobile/sync/push")
 def mobile_sync_push(req: MobilePushRequest, _claims: dict = Depends(require_roles({"owner", "operator"}))):
     row_id = f"{req.device_id}:{req.sync_batch_id}"
+    applied = 0
+    skipped = 0
+
     with engine.begin() as conn:
         existing = conn.execute(
             text("SELECT id FROM mobile_sync_log WHERE id = :rid"),
@@ -406,7 +409,91 @@ def mobile_sync_push(req: MobilePushRequest, _claims: dict = Depends(require_rol
                 "deduplicated": True,
                 "sync_batch_id": req.sync_batch_id,
                 "accepted_changes": 0,
+                "skipped_changes": len(req.changes),
             }
+
+        for ch in req.changes:
+            resource = (ch.resource or "").strip().lower()
+            payload = ch.payload or {}
+            incoming_updated_at = str(payload.get("updated_at") or now_iso())
+
+            if resource == "entities":
+                if not payload.get("id"):
+                    skipped += 1
+                    continue
+
+                current = conn.execute(text("SELECT updated_at FROM entities WHERE id=:id"), {"id": payload["id"]}).fetchone()
+                if current and str(current[0]) >= incoming_updated_at:
+                    skipped += 1
+                    continue
+
+                conn.execute(text("""
+                    INSERT INTO entities (id, type, full_name, contact_phone, updated_at)
+                    VALUES (:id,:type,:full_name,:contact_phone,:u)
+                    ON CONFLICT(id) DO UPDATE SET
+                      type=:type, full_name=:full_name, contact_phone=:contact_phone, updated_at=:u
+                """), {
+                    "id": payload.get("id"),
+                    "type": payload.get("type", "lead"),
+                    "full_name": payload.get("full_name", "Unknown"),
+                    "contact_phone": payload.get("contact_phone", ""),
+                    "u": incoming_updated_at,
+                })
+                applied += 1
+                continue
+
+            if resource == "events":
+                if not payload.get("id") or not payload.get("entity_id"):
+                    skipped += 1
+                    continue
+
+                current = conn.execute(text("SELECT updated_at FROM events WHERE id=:id"), {"id": payload["id"]}).fetchone()
+                if current and str(current[0]) >= incoming_updated_at:
+                    skipped += 1
+                    continue
+
+                conn.execute(text("""
+                    INSERT INTO events (id, entity_id, status, scheduled_for, updated_at)
+                    VALUES (:id,:entity_id,:status,:scheduled_for,:u)
+                    ON CONFLICT(id) DO UPDATE SET
+                      entity_id=:entity_id, status=:status, scheduled_for=:scheduled_for, updated_at=:u
+                """), {
+                    "id": payload.get("id"),
+                    "entity_id": payload.get("entity_id"),
+                    "status": payload.get("status", "scheduled"),
+                    "scheduled_for": payload.get("scheduled_for"),
+                    "u": incoming_updated_at,
+                })
+                applied += 1
+                continue
+
+            if resource == "transactions":
+                if not payload.get("id"):
+                    skipped += 1
+                    continue
+
+                current = conn.execute(text("SELECT updated_at FROM transactions WHERE id=:id"), {"id": payload["id"]}).fetchone()
+                if current and str(current[0]) >= incoming_updated_at:
+                    skipped += 1
+                    continue
+
+                conn.execute(text("""
+                    INSERT INTO transactions (id, event_id, amount, type, status, updated_at)
+                    VALUES (:id,:event_id,:amount,:type,:status,:u)
+                    ON CONFLICT(id) DO UPDATE SET
+                      event_id=:event_id, amount=:amount, type=:type, status=:status, updated_at=:u
+                """), {
+                    "id": payload.get("id"),
+                    "event_id": payload.get("event_id"),
+                    "amount": str(payload.get("amount", "0")),
+                    "type": payload.get("type", "income"),
+                    "status": payload.get("status", "pending"),
+                    "u": incoming_updated_at,
+                })
+                applied += 1
+                continue
+
+            skipped += 1
 
         conn.execute(
             mobile_sync_log.insert().values(
@@ -422,7 +509,9 @@ def mobile_sync_push(req: MobilePushRequest, _claims: dict = Depends(require_rol
         "ok": True,
         "deduplicated": False,
         "sync_batch_id": req.sync_batch_id,
-        "accepted_changes": len(req.changes),
+        "accepted_changes": applied,
+        "skipped_changes": skipped,
+        "conflict_policy": "last-write-wins-by-updated_at",
     }
 
 

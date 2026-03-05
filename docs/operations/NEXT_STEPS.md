@@ -27,5 +27,5 @@
 ## Fase 3 — Android-first
 - [x] Contrato de sync incremental
 - [ ] App Android v0 com agenda + confirmações
-- [ ] Offline mode + reconciliação
-- [x] Endpoints base de sync (`/mobile/sync/pull|push`)
+- [x] Offline mode + reconciliação (base de conflito LWW por `updated_at` no backend)
+- [x] Endpoints base de sync (`/mobile/sync/pull|push`) com aplicação real no push
