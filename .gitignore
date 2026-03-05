@@ -8,6 +8,7 @@ __pycache__/
 
 # node
 node_modules/
+apps/*/node_modules/
 
 # auth state
 apps/baileys-gateway/.auth/
