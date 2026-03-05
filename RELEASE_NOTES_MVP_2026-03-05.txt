@@ -1,0 +1,16 @@
+L2 CORE OS — RELEASE NOTES MVP (2026-03-05)
+
+Resumo:
+- Arquitetura containerizada (web/api/worker/beat/db/redis/baileys-gateway)
+- Segurança base enterprise (JWT/RBAC, rate-limit, HMAC anti-replay)
+- Sync mobile incremental (pull/push) com reconciliação LWW por updated_at
+- IA fallback determinística (sem custo recorrente)
+- Wizard web MVP para configuração
+- Script automatizado de validação GO/NO-GO
+
+Status atual:
+- MVP controlado local aprovado (GO)
+
+Pendências pós-MVP:
+- Estado distribuído em Redis para limiter/replay em multi-réplica
+- App Android v0
