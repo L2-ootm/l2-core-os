@@ -1,7 +1,10 @@
 # L2 Control Center (Windows)
 
 Script unificado de operação diária:
-- `infra/scripts/l2-control.bat`
+- `l2-control.bat` (na raiz do projeto)
+
+Atalho legado (ainda pode existir em docs antigos):
+- `infra/scripts/l2-control.bat` (descontinuado)
 
 ## Recursos
 1. Start seguro (up + health)

@@ -10,7 +10,7 @@ L2 CORE OS — INSTALAÇÃO RÁPIDA (Windows)
 - Clique 2x em: l2-setup.bat
 
 2.1) Operação diária simplificada
-- Execute: l2-control.bat
+- Na raiz do projeto, execute: l2-control.bat
 - Use menu único para Start/Status/Logs/GO-NO-GO/Recover WhatsApp
 
 3) Acesso

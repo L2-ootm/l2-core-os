@@ -1,8 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
 
-cd /d %~dp0\..
-set COMPOSE=docker compose -f docker-compose.yml --env-file .env
+cd /d %~dp0
+set COMPOSE=docker compose -f infra/docker-compose.yml --env-file infra/.env
 
 :menu
 cls
@@ -86,7 +86,7 @@ pause
 goto menu
 
 :go_nogo
-powershell -ExecutionPolicy Bypass -File scripts\e2e-go-no-go.ps1
+powershell -ExecutionPolicy Bypass -File infra\scripts\e2e-go-no-go.ps1
 pause
 goto menu
 
@@ -100,10 +100,10 @@ start http://localhost:3000
 goto menu
 
 :ensure_env
-if not exist .env (
-  if exist .env.example (
-    copy .env.example .env >nul
-    echo [.env] criado a partir de .env.example
+if not exist infra\.env (
+  if exist infra\.env.example (
+    copy infra\.env.example infra\.env >nul
+    echo [infra/.env] criado a partir de infra/.env.example
   ) else (
     echo [ERRO] .env.example nao encontrado.
   )
