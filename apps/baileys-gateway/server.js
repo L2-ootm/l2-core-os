@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import axios from 'axios';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
+import QRCode from 'qrcode';
 import crypto from 'crypto';
 import fs from 'fs/promises';
 import makeWASocket, {
@@ -248,6 +249,18 @@ app.get('/session/status', (_req, res) => {
 app.get('/session/qr', (_req, res) => {
   if (!lastQr) return res.status(404).json({ ok: false, error: 'qr_not_available' });
   res.json({ ok: true, qr: lastQr });
+});
+
+app.get('/session/qr.png', async (_req, res) => {
+  if (!lastQr) return res.status(404).json({ ok: false, error: 'qr_not_available' });
+  try {
+    const png = await QRCode.toBuffer(lastQr, { type: 'png', width: 360, margin: 1 });
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(png);
+  } catch {
+    return res.status(500).json({ ok: false, error: 'qr_render_failed' });
+  }
 });
 
 app.post('/session/connect', async (_req, res) => {

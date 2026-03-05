@@ -23,6 +23,8 @@ export default function Configuracoes() {
   const [pendingSync, setPendingSync] = useState(0);
   const [waMode, setWaMode] = useState<"primary" | "dedicated">("primary");
   const [autoFinanceMode, setAutoFinanceMode] = useState<"confirm_required" | "auto_if_high_confidence">("confirm_required");
+  const [showWaModal, setShowWaModal] = useState(false);
+  const [qrNonce, setQrNonce] = useState(Date.now());
 
   useEffect(() => {
     setAuthToken(token.trim());
@@ -92,6 +94,12 @@ export default function Configuracoes() {
       setPendingSync((v) => Math.max(0, v - 1));
       setIsLoading(false);
     }
+  }
+
+  async function openWhatsAppConnectModal() {
+    setShowWaModal(true);
+    setQrNonce(Date.now());
+    await wa("connect");
   }
 
   async function wa(action: "status" | "connect" | "disconnect" | "catchup") {
@@ -181,15 +189,39 @@ export default function Configuracoes() {
               <div className="flex gap-2 flex-wrap">
                 <button onClick={saveWhatsAppPolicy} className="liquid-btn liquid-btn-primary text-xs">Salvar política</button>
                 <button onClick={() => wa("status")} className="liquid-btn text-xs">Status</button>
-                <button onClick={() => wa("connect")} className="liquid-btn text-xs">Conectar</button>
+                <button onClick={openWhatsAppConnectModal} className="liquid-btn liquid-btn-primary text-xs">Conectar via QR</button>
                 <button onClick={() => wa("catchup")} className="liquid-btn text-xs">Catch-up</button>
                 <button onClick={() => wa("disconnect")} className="liquid-btn text-xs">Desconectar</button>
               </div>
             </div>
           )}
 
-          {activeTab !== "geral" && activeTab !== "whatsapp" && (
-            <div className="text-sm text-muted-foreground">Módulo em integração com backend.</div>
+          {activeTab === "seguranca" && (
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <div>JWT/RBAC ativo no backend. Rate limit e anti-replay habilitados.</div>
+              <button onClick={loadCurrent} className="liquid-btn text-xs">Recarregar políticas de segurança</button>
+            </div>
+          )}
+
+          {activeTab === "ia" && (
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <div>IA em blocos funcionais + política de risco por número principal/dedicado.</div>
+              <button onClick={loadCurrent} className="liquid-btn text-xs">Ver políticas de IA atuais</button>
+            </div>
+          )}
+
+          {activeTab === "mobile" && (
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <div>Sync incremental ativo via pull/push com reconciliação por updated_at.</div>
+              <button onClick={loadCurrent} className="liquid-btn text-xs">Ver configuração de sync</button>
+            </div>
+          )}
+
+          {activeTab === "integracoes" && (
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <div>Integrações disponíveis: WhatsApp gateway + API Core + automações.</div>
+              <button onClick={() => wa("status")} className="liquid-btn text-xs">Ver status integração WhatsApp</button>
+            </div>
           )}
 
           {output ? (
@@ -199,6 +231,22 @@ export default function Configuracoes() {
           )}
         </GlassCard>
       </div>
+
+      {showWaModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <GlassCard className="w-full max-w-md space-y-3">
+            <h3 className="text-sm font-semibold">Conectar WhatsApp</h3>
+            <p className="text-xs text-muted-foreground">Escaneie o QR abaixo no WhatsApp da clínica.</p>
+            <div className="rounded-xl bg-white p-3 flex justify-center">
+              <img src={`/wa/session/qr.png?nonce=${qrNonce}`} alt="QR WhatsApp" className="w-64 h-64 object-contain" />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setQrNonce(Date.now())} className="liquid-btn text-xs">Atualizar QR</button>
+              <button onClick={() => { setShowWaModal(false); wa("status"); }} className="liquid-btn liquid-btn-primary text-xs">Fechar</button>
+            </div>
+          </GlassCard>
+        </div>
+      )}
     </div>
   );
 }

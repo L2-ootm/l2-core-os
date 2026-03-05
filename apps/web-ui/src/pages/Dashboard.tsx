@@ -1,4 +1,5 @@
 import { GlassCard } from "@/components/ui/glass-card";
+import { LoadingState } from "@/components/ui/async-state";
 import { KPICard } from "@/components/ui/kpi-card";
 import { StatusPill } from "@/components/ui/status-pill";
 import {
@@ -7,7 +8,7 @@ import {
 } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
 import { useEffect, useState } from "react";
-import { apiGet, waGet } from "@/lib/api";
+import { apiGet, waGet, waPost } from "@/lib/api";
 
 const revenueData = [
   { day: "Seg", value: 4200 }, { day: "Ter", value: 5800 },
@@ -57,6 +58,9 @@ export default function Dashboard() {
   const [summary, setSummary] = useState<any>(null);
   const [classifications, setClassifications] = useState<any>(null);
   const [waStatus, setWaStatus] = useState<any>(null);
+  const [showWaModal, setShowWaModal] = useState(false);
+  const [qrNonce, setQrNonce] = useState(Date.now());
+  const [busyWa, setBusyWa] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -75,6 +79,17 @@ export default function Dashboard() {
     })();
   }, []);
 
+  async function openWaConnect() {
+    setBusyWa(true);
+    try {
+      await waPost('/session/connect');
+      setQrNonce(Date.now());
+      setShowWaModal(true);
+    } finally {
+      setBusyWa(false);
+    }
+  }
+
   const leads = classifications?.new_lead ?? 0;
   const unknown = classifications?.unknown ?? 0;
   const humanPending = classifications?.human_review_pending ?? 0;
@@ -82,6 +97,12 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 animate-in-fade">
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-bold text-foreground">Dashboard</h1>
+        <button onClick={openWaConnect} className="liquid-btn liquid-btn-primary text-xs">Conectar WhatsApp</button>
+      </div>
+      {busyWa && <LoadingState label="Preparando conexão WhatsApp..." />}
+
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <KPICard label="Leads Novos" value={leads} change="classificação automática" changeType="positive" icon={Users} />
@@ -197,6 +218,22 @@ export default function Dashboard() {
           </GlassCard>
         </div>
       </div>
+
+      {showWaModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <GlassCard className="w-full max-w-md space-y-3">
+            <h3 className="text-sm font-semibold">Conectar WhatsApp</h3>
+            <p className="text-xs text-muted-foreground">Escaneie o QR no celular da clínica.</p>
+            <div className="rounded-xl bg-white p-3 flex justify-center">
+              <img src={`/wa/session/qr.png?nonce=${qrNonce}`} alt="QR WhatsApp" className="w-64 h-64 object-contain" />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setQrNonce(Date.now())} className="liquid-btn text-xs">Atualizar QR</button>
+              <button onClick={() => setShowWaModal(false)} className="liquid-btn liquid-btn-primary text-xs">Fechar</button>
+            </div>
+          </GlassCard>
+        </div>
+      )}
     </div>
   );
 }
