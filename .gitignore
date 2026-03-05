@@ -11,3 +11,6 @@ node_modules/
 
 # auth state
 apps/baileys-gateway/.auth/
+
+# runtime artifacts
+apps/api/celerybeat-schedule

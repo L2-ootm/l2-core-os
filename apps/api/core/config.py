@@ -3,10 +3,18 @@ from dotenv import load_dotenv
 from pathlib import Path
 import os
 
+# Em container, variáveis vêm de env_file. Em local, tenta achar infra/.env.
 load_dotenv()
-infra_env = Path(__file__).resolve().parents[3] / "infra" / ".env"
-if infra_env.exists():
-    load_dotenv(infra_env, override=False)
+
+try:
+    file_path = Path(__file__).resolve()
+    for p in [file_path.parent, *file_path.parents]:
+        candidate = p / "infra" / ".env"
+        if candidate.exists():
+            load_dotenv(candidate, override=False)
+            break
+except Exception:
+    pass
 
 
 class Settings(BaseModel):

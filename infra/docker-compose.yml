@@ -74,7 +74,7 @@ services:
     volumes:
       - ../apps/baileys-gateway:/app
       - l2core_baileys_auth:/app/.auth
-    command: sh -lc "npm install && npm run dev"
+    command: sh -lc "apk add --no-cache git >/dev/null && npm install && npm run dev"
     env_file:
       - .env
     ports:
