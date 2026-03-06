@@ -82,6 +82,46 @@ services:
     depends_on:
       - api
 
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ai"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - l2core_ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # Deploy resources allow using GPU if available on the host machine
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # This init container runs once to ensure Llama 3.2 is downloaded
+  ollama-pull:
+    image: ollama/ollama:latest
+    profiles: ["ai"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - l2core_ollama:/root/.ollama
+    command: >
+      sh -c "
+      echo 'Starting model pull...' &&
+      ollama pull llama3.2:3b &&
+      echo 'Model pulled successfully!'
+      "
+    restart: "no"
+
 volumes:
   l2core_pgdata:
   l2core_baileys_auth:
+  l2core_ollama:

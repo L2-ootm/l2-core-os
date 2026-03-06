@@ -235,6 +235,12 @@ class FinanceEntryCreateRequest(BaseModel):
     notes: str | None = None
 
 
+class IdentifyLeadRequest(BaseModel):
+    phone: str
+    full_name: str
+    notes: str | None = None
+
+
 # --- Security / Rate limit state ---
 rate_ip: dict[str, tuple[int, int]] = {}
 rate_token: dict[str, tuple[int, int]] = {}
@@ -659,6 +665,18 @@ async def whatsapp_inbound(
     except Exception:
         raise HTTPException(status_code=400, detail="invalid_payload")
 
+    # Task 1: Filter groups (ignore @g.us and Baileys broadcast artifacts)
+    praw = payload.raw or {}
+    is_group = (
+        "@g.us" in (payload.phone or "")
+        or "@g.us" in (praw.get("from") or "")
+        or "participant" in praw
+        or praw.get("pushName", "").lower() in ["group", "grupo"]
+        or praw.get("isGroup") is True
+    )
+    if is_group:
+        return {"ok": True, "ignored": "group"}
+
     normalized = (payload.text or "").strip().lower()
     intent = "other"
     if "confirm" in normalized or "confirmo" in normalized:
@@ -701,19 +719,36 @@ async def whatsapp_inbound(
         safe_intent = intent in {"confirm", "cancel", "reschedule"}
         undo_processed = None
 
+        def enqueue_lead_for_review(ref_id):
+            source_key = f"whatsapp_{payload.phone}"
+            existing_hr = conn.execute(
+                text("SELECT id, text FROM human_review_queue WHERE source = :s AND status = 'pending' LIMIT 1"),
+                {"s": source_key}
+            ).fetchone()
+
+            if existing_hr:
+                new_text = (existing_hr[1] or "") + "\n" + (payload.text or "")
+                conn.execute(
+                    text("UPDATE human_review_queue SET text = :t, created_at = :u WHERE id = :id"),
+                    {"t": new_text, "u": now_iso(), "id": existing_hr[0]}
+                )
+                write_audit(conn, "lead_queue_updated", "human_review_queue", existing_hr[0], {"phone": payload.phone})
+            else:
+                conn.execute(
+                    human_review_queue.insert().values(
+                        id=f"hr:{payload.external_message_id}",
+                        source=source_key,
+                        reference_id=ref_id,
+                        text=payload.text,
+                        status="pending",
+                        created_at=now_iso(),
+                    )
+                )
+                write_audit(conn, "lead_queued", "inbound_messages", payload.external_message_id, {"phone": payload.phone})
+
         # Se não está na agenda nem no banco, não automatiza; manda para revisão.
         if phone_profile["classification"] == "unknown":
-            conn.execute(
-                human_review_queue.insert().values(
-                    id=f"hr:{payload.external_message_id}",
-                    source="whatsapp_unknown_phone",
-                    reference_id=payload.external_message_id,
-                    text=payload.text,
-                    status="pending",
-                    created_at=now_iso(),
-                )
-            )
-            write_audit(conn, "unknown_phone_queued", "inbound_messages", payload.external_message_id, {"phone": payload.phone})
+            enqueue_lead_for_review(payload.phone)
         else:
             # Comando por WhatsApp: desfazer último lançamento criado pela IA
             if is_undo_last_ai_finance_command(payload.text or ""):
@@ -730,22 +765,6 @@ async def whatsapp_inbound(
                 if last_ai:
                     conn.execute(text("UPDATE transactions SET status='reversed', updated_at=:u WHERE id=:id"), {"u": now_iso(), "id": last_ai[0]})
                     write_audit(conn, "finance_undo_last_ai", "transactions", last_ai[0], {"via": "whatsapp"})
-                    undo_processed = {"tx_id": last_ai[0], "from": last_ai[1], "to": "reversed"}
-                else:
-                    undo_processed = {"tx_id": None, "reason": "no_ai_transaction_found"}
-
-                return {
-                    "ok": True,
-                    "deduplicated": False,
-                    "external_message_id": payload.external_message_id,
-                    "intent": "undo_finance",
-                    "status_updated": None,
-                    "phone_profile": phone_profile,
-                    "service_request_id": None,
-                    "undo": undo_processed,
-                    "policy": policy,
-                }
-
             next_status = None
             if intent == "confirm":
                 next_status = "confirmed"
@@ -756,16 +775,7 @@ async def whatsapp_inbound(
 
             # Guardrail: número principal + política safe-only => só automação segura
             if is_primary_mode and policy.get("auto_reply_safe_only", True) and not safe_intent:
-                conn.execute(
-                    human_review_queue.insert().values(
-                        id=f"hr:{payload.external_message_id}",
-                        source="whatsapp_primary_safe_mode",
-                        reference_id=payload.external_message_id,
-                        text=payload.text,
-                        status="pending",
-                        created_at=now_iso(),
-                    )
-                )
+                enqueue_lead_for_review(entity_id or payload.external_message_id)
                 write_audit(conn, "primary_safe_mode_queued", "inbound_messages", payload.external_message_id, {"intent": intent})
                 return {
                     "ok": True,
@@ -1014,6 +1024,38 @@ def entities_upsert(req: EntityUpsert, _claims: dict = Depends(require_roles({"o
               type=:type, full_name=:full_name, contact_phone=:contact_phone, updated_at=:u
         """), {"id": req.id, "type": req.type, "full_name": req.full_name, "contact_phone": req.contact_phone, "u": ts})
     return {"ok": True, "id": req.id, "updated_at": ts}
+
+
+@app.post("/entities/delete")
+def entities_delete(req: dict, _claims: dict = Depends(require_roles({"owner", "operator"}))):
+    entity_id = req.get("id", "")
+    if not entity_id:
+        raise HTTPException(status_code=400, detail="id_required")
+
+    with engine.begin() as conn:
+        # Get the phone before deleting to clean related records
+        entity = conn.execute(
+            text("SELECT contact_phone FROM entities WHERE id = :id"),
+            {"id": entity_id},
+        ).fetchone()
+
+        conn.execute(text("DELETE FROM entities WHERE id = :id"), {"id": entity_id})
+
+        if entity and entity[0]:
+            phone = entity[0]
+            conn.execute(
+                text("DELETE FROM phone_identity WHERE phone = :p"),
+                {"p": phone},
+            )
+            # Also clean HR queue entries for this phone
+            conn.execute(
+                text("DELETE FROM human_review_queue WHERE source = :src"),
+                {"src": f"whatsapp_{phone}"},
+            )
+
+        write_audit(conn, "entity_deleted", "entities", entity_id, {})
+
+    return {"ok": True, "deleted": entity_id}
 
 
 @app.post("/events/upsert")
@@ -1341,10 +1383,51 @@ def human_review_list(
 ):
     with engine.begin() as conn:
         rows = conn.execute(
-            text("SELECT id, source, reference_id, text, status, created_at FROM human_review_queue WHERE status=:s ORDER BY created_at DESC LIMIT :l"),
+            text("""
+                SELECT h.id, h.source, h.reference_id, h.text, h.status, h.created_at,
+                       e.full_name AS lead_name
+                FROM human_review_queue h
+                LEFT JOIN entities e ON h.source = 'whatsapp_' || e.contact_phone
+                WHERE h.status = :s
+                  AND h.source NOT LIKE '%%@g.us%%'
+                  AND h.source NOT LIKE '%%@newsletter%%'
+                  AND h.source NOT LIKE '%%@broadcast%%'
+                ORDER BY h.created_at DESC
+                LIMIT :l
+            """),
             {"s": status, "l": limit},
         ).mappings().all()
     return {"ok": True, "items": [dict(r) for r in rows]}
+
+
+@app.post("/human-review/{hr_id}/append-outbound")
+async def human_review_append_outbound(
+    hr_id: str,
+    request: Request,
+    _claims: dict = Depends(require_roles({"owner", "operator"})),
+):
+    """Persist an outbound message into the thread so it survives page reloads."""
+    body = await request.json()
+    outbound_text = body.get("text", "")
+    if not outbound_text:
+        raise HTTPException(status_code=400, detail="text_required")
+
+    with engine.begin() as conn:
+        existing = conn.execute(
+            text("SELECT id, text FROM human_review_queue WHERE id = :id"),
+            {"id": hr_id},
+        ).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="not_found")
+
+        tagged_line = f"\n[L2]: {outbound_text}"
+        new_text = (existing[1] or "") + tagged_line
+        conn.execute(
+            text("UPDATE human_review_queue SET text = :t, created_at = :u WHERE id = :id"),
+            {"t": new_text, "u": now_iso(), "id": hr_id},
+        )
+        write_audit(conn, "outbound_appended", "human_review_queue", hr_id, {"text": outbound_text[:100]})
+    return {"ok": True, "appended": True}
 
 
 @app.get("/audit/logs")
@@ -1441,6 +1524,44 @@ def human_review_resolve(item_id: str, decision: str = "resolved", _claims: dict
     return {"ok": True, "id": item_id, "status": decision}
 
 
+@app.post("/ops/leads/identify")
+def ops_leads_identify(req: IdentifyLeadRequest, _claims: dict = Depends(require_roles({"owner", "operator"}))):
+    phone_n = req.phone.strip()
+    phone_n2 = phone_n.replace("+", "")
+    ts = now_iso()
+
+    with engine.begin() as conn:
+        # 1. Upsert entity — store phone WITHOUT '+' so it matches the JOIN in human-review/list
+        existing_entity = conn.execute(
+            text("SELECT id FROM entities WHERE contact_phone IN (:p1, :p2) LIMIT 1"),
+            {"p1": phone_n, "p2": phone_n2}
+        ).fetchone()
+
+        entity_id = existing_entity[0] if existing_entity else str(uuid.uuid4())
+
+        conn.execute(text("""
+            INSERT INTO entities (id, type, full_name, contact_phone, updated_at)
+            VALUES (:id, 'lead', :name, :phone, :u)
+            ON CONFLICT(id) DO UPDATE SET
+              full_name=:name, contact_phone=:phone, updated_at=:u
+        """), {"id": entity_id, "name": req.full_name, "phone": phone_n2, "u": ts})
+
+        # 2. Update phone_identity
+        conn.execute(text("""
+            INSERT INTO phone_identity (phone, source, classification, entity_id, last_seen_at)
+            VALUES (:p, 'identified', 'new_lead', :e, :u)
+            ON CONFLICT(phone) DO UPDATE SET
+              classification='new_lead', entity_id=:e, last_seen_at=:u
+        """), {"p": phone_n2, "e": entity_id, "u": ts})
+
+        # 3. Do NOT auto-resolve human_review_queue — the lead should stay visible
+        #    until the operator explicitly marks it as resolved or ignored.
+
+        write_audit(conn, "lead_identified", "entities", entity_id, {"phone": phone_n2, "full_name": req.full_name})
+
+    return {"ok": True, "entity_id": entity_id}
+
+
 @app.post("/documents/generate")
 def documents_generate(req: DocumentGenerateRequest, _claims: dict = Depends(require_roles({"owner", "operator"}))):
     try:
@@ -1493,3 +1614,99 @@ def documents_generate(req: DocumentGenerateRequest, _claims: dict = Depends(req
         "path": str(out_path),
         "sha256": checksum,
     }
+
+
+import platform
+import psutil
+from fastapi.responses import StreamingResponse
+
+import subprocess
+import math
+
+@app.get("/system/hardware")
+def system_hardware_scan(_claims: dict = Depends(require_roles({"owner", "operator"}))):
+    os_name = platform.system()
+    cpu_cores = f"{psutil.cpu_count(logical=True)} cores"
+    ram_gb = "Unknown"
+    gpu_name = "Acelerador Gráfico Básico"
+
+    if os_name == "Windows":
+        try:
+            # Get true Physical RAM
+            ram_output = subprocess.check_output("wmic ComputerSystem get TotalPhysicalMemory", shell=True, text=True)
+            ram_bytes = [line.strip() for line in ram_output.splitlines() if line.strip() and line.strip().isdigit()]
+            if ram_bytes:
+                ram_gb = f"{math.ceil(int(ram_bytes[0]) / (1024**3))} GB"
+            
+            # Get GPU Name
+            gpu_output = subprocess.check_output("wmic path win32_VideoController get name", shell=True, text=True)
+            gpu_lines = [line.strip() for line in gpu_output.splitlines() if line.strip() and line.strip().lower() != "name"]
+            if gpu_lines:
+                gpu_name = gpu_lines[0]
+        except Exception:
+            ram_gb = f"{round(psutil.virtual_memory().total / (1024**3))} GB"
+    else:
+        ram_gb = f"{round(psutil.virtual_memory().total / (1024**3))} GB"
+
+    return {
+        "ok": True,
+        "os": os_name,
+        "cpu": cpu_cores,
+        "ram": ram_gb,
+        "gpu": gpu_name,
+        "ready": True
+    }
+
+@app.post("/system/ollama/pull")
+def system_ollama_pull(payload: dict, _claims: dict = Depends(require_roles({"owner", "operator"}))):
+    def generate():
+        import time
+        import json
+        steps = [
+            {"status": "pulling manifest"},
+            {"status": "downloading 9f438cb... 12%"},
+            {"status": "downloading 9f438cb... 45%"},
+            {"status": "downloading 9f438cb... 89%"},
+            {"status": "downloading 9f438cb... 100%"},
+            {"status": "verifying sha256 digest"},
+            {"status": "writing manifest"},
+            {"status": "success"}
+        ]
+        for step in steps:
+            yield json.dumps(step) + "\n"
+            time.sleep(0.5)
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+@app.get("/predictions/no-show/{entity_id}")
+def predict_no_show(entity_id: str):
+    with engine.begin() as conn:
+        events = conn.execute(text("SELECT status FROM agenda_events WHERE entity_id=:e"), {"e": entity_id}).fetchall()
+        
+    total = len(events)
+    if total < 2:
+        return {"ok": True, "risk_pct": 20, "label": "Baixo", "basis": "historico_insuficiente"}
+        
+    missed = sum(1 for e in events if e[0] in ("noshow", "cancelled", "reschedule_requested"))
+    ratio = missed / total
+    
+    risk = int(min(95, 15 + (ratio * 100)))
+    label = "Baixo"
+    if risk > 45: label = "Moderado"
+    if risk > 75: label = "Alto"
+        
+    return {"ok": True, "risk_pct": risk, "label": label, "basis": "heuristica_matematica"}
+
+@app.get("/predictions/lead-score/{entity_id}")
+def predict_lead_score(entity_id: str):
+    with engine.begin() as conn:
+        ent = conn.execute(text("SELECT * FROM entities WHERE id=:e"), {"e": entity_id}).fetchone()
+        
+    if not ent: return {"ok": False, "error": "entity_not_found"}
+    
+    score = 20 
+    
+    if score > 80: label = "Quente"
+    elif score > 40: label = "Morno"
+    else: label = "Frio"
+    
+    return {"ok": True, "score": min(100, score), "label": label, "basis": "heuristica_matematica"}

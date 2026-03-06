@@ -1,0 +1,21 @@
+# env / secrets
+infra/.env
+.env
+
+# python cache
+__pycache__/
+*.pyc
+
+# node
+node_modules/
+apps/*/node_modules/
+
+# auth state
+apps/baileys-gateway/.auth/
+
+# runtime artifacts
+apps/api/celerybeat-schedule
+apps/api/generated-docs/
+
+# release bundles
+releases/*.zip

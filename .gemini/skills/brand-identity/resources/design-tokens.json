@@ -1,0 +1,51 @@
+{
+  "meta": {
+    "system": "L2 Dark Luxury Industrialism",
+    "version": "4.0.0"
+  },
+  "colors": {
+    "void": {
+      "base": "#050505",
+      "deep": "#000000",
+      "surface": "#0A0A0A",
+      "card": "#111111",
+      "industrial_carbon": "#0F0F0F",
+      "industrial_gunmetal": "#1A1A1A"
+    },
+    "voltage": {
+      "electric_violet": "#7F00FF",
+      "electric_purple_legacy": "#7B2CBF",
+      "cyber_blue": "#00F0FF",
+      "acid_neon_violet": "#E0AAFF"
+    },
+    "text": {
+      "titanium_white": "#E0E0E0",
+      "mercury_grey": "#A0A0A0",
+      "carbon_grey": "#505050",
+      "code_comment": "#696969"
+    },
+    "status": {
+      "success": "#00FF94",
+      "terminal_green": "#00FF41",
+      "warning": "#FFD600",
+      "alert_orange": "#FF4800",
+      "error": "#FF0055"
+    }
+  },
+  "materials": {
+    "obsidian": {
+      "background": "rgba(5, 5, 5, 0.85)",
+      "backdrop-filter": "blur(20px)",
+      "border": "1px solid rgba(255, 255, 255, 0.05)"
+    },
+    "anodized_metal": {
+      "background": "linear-gradient(145deg, #1a1a1a, #0f0f0f)",
+      "border": "1px solid rgba(255, 255, 255, 0.03)"
+    }
+  },
+  "typography": {
+    "primary": "Inter, sans-serif",
+    "display": "Orbitron, sans-serif",
+    "mono": "JetBrains Mono, monospace"
+  }
+}

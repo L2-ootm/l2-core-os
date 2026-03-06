@@ -1,0 +1,386 @@
+/* L2CalendarV2Styles.css - Enterprise Grade Calendar
+   Dark Luxury Industrialism Theme — Block-Based Layout
+*/
+
+/* ===== BASE ===== */
+.l2-calendar-v2-wrapper {
+    color: hsl(var(--foreground));
+    font-family: inherit;
+}
+
+.l2-calendar-v2-wrapper .rbc-calendar {
+    min-height: 100% !important;
+    background: hsl(var(--background)) !important;
+}
+
+/* ===== ULTIMATE BORDER OVERRIDE ===== */
+.l2-calendar-v2-wrapper *,
+.l2-calendar-v2-wrapper *::before,
+.l2-calendar-v2-wrapper *::after {
+    border-color: #1e1e1e !important;
+}
+
+/* ===== TOOLBAR ===== */
+.l2-calendar-v2-wrapper .rbc-toolbar {
+    margin-bottom: 24px;
+    gap: 16px;
+    align-items: center;
+}
+
+.l2-calendar-v2-wrapper .rbc-toolbar button {
+    color: hsl(var(--foreground));
+    background: hsla(var(--secondary), 0.3);
+    border: 1px solid hsla(var(--border), 0.4);
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: all 0.2s ease;
+    box-shadow: none;
+}
+
+.l2-calendar-v2-wrapper .rbc-toolbar button:hover {
+    background: hsla(var(--secondary), 0.6);
+    border-color: hsla(var(--border), 0.6);
+    transform: translateY(-1px);
+}
+
+.l2-calendar-v2-wrapper .rbc-toolbar button.rbc-active {
+    background: hsla(var(--primary), 0.2);
+    border-color: hsla(var(--primary), 0.4);
+    color: hsl(var(--primary));
+    box-shadow: 0 0 10px hsla(var(--primary), 0.1);
+}
+
+/* ===== HEADER ROW ===== */
+.l2-calendar-v2-wrapper .rbc-time-header {
+    border-bottom: 1px solid #1e1e1e !important;
+    padding-bottom: 8px;
+    min-width: max-content;
+}
+
+.l2-calendar-v2-wrapper .rbc-header {
+    border: none !important;
+    font-weight: 500;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: hsl(var(--muted-foreground));
+    padding: 12px 0;
+}
+
+.l2-calendar-v2-wrapper .rbc-header+.rbc-header {
+    border-left: 1px solid #1e1e1e !important;
+}
+
+/* ===== TIME VIEW CONTAINER ===== */
+.l2-calendar-v2-wrapper .rbc-time-view {
+    border: none !important;
+    border-radius: 12px;
+    background: hsl(var(--background)) !important;
+    display: flex;
+    flex-direction: column;
+    /* Let the content area scroll, NOT the time view itself */
+    overflow: hidden !important;
+}
+
+.l2-calendar-v2-wrapper .rbc-time-content {
+    flex: 1 1 0%;
+    overflow-y: auto;
+    overflow-x: auto;
+    border-top: none !important;
+    background: hsl(var(--background)) !important;
+    position: relative;
+}
+
+/* Resource columns have sane min widths */
+.l2-calendar-v2-wrapper .rbc-time-column {
+    min-width: 200px;
+}
+
+/* ===== BLOCK-BASED TIMESLOTS ===== */
+/* Each timeslot group = 1 hour (with 2 x 30min slots inside) */
+.l2-calendar-v2-wrapper .rbc-timeslot-group {
+    border-bottom: 1px solid #1e1e1e !important;
+    min-height: 48px;
+    /* Compact blocks — fits more appointments per screen */
+}
+
+/* Individual 30-min slots — subtle inner divider */
+.l2-calendar-v2-wrapper .rbc-time-slot {
+    border-bottom: 1px solid rgba(30, 30, 30, 0.5) !important;
+    transition: background-color 0.15s ease;
+    min-height: 24px;
+}
+
+.l2-calendar-v2-wrapper .rbc-time-slot:hover {
+    background-color: hsla(var(--primary), 0.03);
+    cursor: crosshair;
+}
+
+/* ===== VERTICAL GRID LINES ===== */
+.l2-calendar-v2-wrapper .rbc-day-bg+.rbc-day-bg {
+    border-left: 1px solid #1e1e1e !important;
+}
+
+.l2-calendar-v2-wrapper .rbc-time-content>*+*>* {
+    border-left: 1px solid #1e1e1e !important;
+}
+
+/* ===== TIME GUTTER (Left labels) — STICKY ===== */
+.l2-calendar-v2-wrapper .rbc-time-gutter {
+    border-right: 1px solid #1e1e1e !important;
+    background: transparent;
+    position: sticky !important;
+    left: 0;
+    z-index: 20;
+    background-color: hsl(var(--background)) !important;
+}
+
+.l2-calendar-v2-wrapper .rbc-time-gutter .rbc-timeslot-group {
+    border-bottom: none !important;
+}
+
+.l2-calendar-v2-wrapper .rbc-label {
+    color: hsl(var(--muted-foreground));
+    font-size: 0.7rem;
+    padding: 0 8px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Header gutter corner */
+.l2-calendar-v2-wrapper .rbc-time-header-gutter {
+    background: transparent !important;
+    border: none !important;
+}
+
+/* ===== EVENTS (Block Cards) ===== */
+.l2-calendar-v2-wrapper .rbc-event {
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 2px 4px;
+    font-size: 0.75rem;
+}
+
+.l2-calendar-v2-wrapper .rbc-event.rbc-selected {
+    background: transparent;
+}
+
+.l2-calendar-v2-wrapper .rbc-event-label {
+    display: none;
+}
+
+.l2-calendar-v2-wrapper .rbc-event-content {
+    height: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.75rem;
+}
+
+/* ===== DRAG & DROP ===== */
+.l2-calendar-v2-wrapper .rbc-addons-dnd-resizable {
+    transition: transform 0.1s;
+}
+
+.l2-calendar-v2-wrapper .rbc-addons-dnd-drag-preview .rbc-event {
+    opacity: 0.7;
+    transform: scale(0.98);
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
+    cursor: grabbing !important;
+}
+
+/* ===== CURRENT TIME INDICATOR ===== */
+.l2-calendar-v2-wrapper .rbc-current-time-indicator {
+    background-color: hsl(var(--primary));
+    height: 2px;
+    box-shadow: 0 0 8px hsl(var(--primary));
+    z-index: 5;
+}
+
+.l2-calendar-v2-wrapper .rbc-current-time-indicator::before {
+    content: '';
+    position: absolute;
+    left: -4px;
+    top: -3px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: hsl(var(--primary));
+    box-shadow: 0 0 8px hsl(var(--primary));
+}
+
+/* ===== MONTH VIEW ===== */
+.l2-calendar-v2-wrapper .rbc-month-view {
+    border: 1px solid #1e1e1e !important;
+    border-radius: 12px;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.2);
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 0% !important;
+}
+
+.l2-calendar-v2-wrapper .rbc-month-row {
+    border-bottom: 1px solid #1e1e1e !important;
+    flex: 1 1 0% !important;
+    min-height: 80px;
+}
+
+.l2-calendar-v2-wrapper .rbc-month-row+.rbc-month-row {
+    border-top: none !important;
+}
+
+.l2-calendar-v2-wrapper .rbc-day-bg {
+    background: transparent !important;
+}
+
+.l2-calendar-v2-wrapper .rbc-day-bg+.rbc-day-bg {
+    border-left: 1px solid #1e1e1e !important;
+}
+
+.l2-calendar-v2-wrapper .rbc-date-cell {
+    padding: 8px;
+    font-weight: 600;
+    font-size: 0.75rem;
+    color: hsl(var(--muted-foreground));
+    text-align: right;
+}
+
+.l2-calendar-v2-wrapper .rbc-date-cell.rbc-now {
+    font-weight: 800;
+}
+
+.l2-calendar-v2-wrapper .rbc-date-cell.rbc-now>a {
+    background: hsl(var(--primary));
+    color: black;
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    line-height: 24px;
+    text-align: center;
+    border-radius: 6px;
+    box-shadow: 0 0 12px hsla(var(--primary), 0.3);
+}
+
+.l2-calendar-v2-wrapper .rbc-today {
+    background: rgba(var(--primary), 0.03) !important;
+}
+
+/* Event Blocks in Month View */
+.l2-calendar-v2-wrapper .rbc-month-view .rbc-event {
+    background: hsla(var(--primary), 0.1) !important;
+    border: 1px solid hsla(var(--primary), 0.3) !important;
+    border-left: 3px solid hsl(var(--primary)) !important;
+    color: hsl(var(--primary)) !important;
+    border-radius: 4px !important;
+    margin: 1px 4px !important;
+    padding: 2px 6px !important;
+    font-size: 0.7rem !important;
+    font-weight: 600 !important;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.5) !important;
+    height: auto !important;
+    min-height: 20px;
+}
+
+.l2-calendar-v2-wrapper .rbc-month-view .rbc-event.rbc-selected {
+    background: hsla(var(--primary), 0.2) !important;
+    box-shadow: 0 0 8px hsla(var(--primary), 0.2) !important;
+}
+
+.l2-calendar-v2-wrapper .rbc-month-view .rbc-event-content {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.l2-calendar-v2-wrapper .rbc-show-more {
+    background: transparent !important;
+    color: hsl(var(--muted-foreground)) !important;
+    font-size: 0.65rem !important;
+    font-weight: bold !important;
+    padding: 2px 8px !important;
+    text-transform: uppercase;
+}
+
+.l2-calendar-v2-wrapper .rbc-show-more:hover {
+    color: hsl(var(--primary)) !important;
+    text-decoration: underline;
+}
+
+.l2-calendar-v2-wrapper .rbc-off-range-bg {
+    background: rgba(255, 255, 255, 0.01) !important;
+}
+
+/* ===== AGENDA VIEW (ListView) ===== */
+.l2-calendar-v2-wrapper .rbc-agenda-view {
+    border: 1px solid #1e1e1e !important;
+    border-radius: 12px;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.3);
+}
+
+.l2-calendar-v2-wrapper .rbc-agenda-table {
+    border: none !important;
+}
+
+.l2-calendar-v2-wrapper .rbc-agenda-table thead>tr>th {
+    border-bottom: 1px solid #1e1e1e !important;
+    color: hsl(var(--muted-foreground)) !important;
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.l2-calendar-v2-wrapper .rbc-agenda-table tbody>tr>td {
+    border-top: 1px solid #1e1e1e !important;
+    padding: 12px 16px;
+    font-size: 0.8rem;
+    color: hsl(var(--foreground));
+    vertical-align: middle;
+}
+
+.l2-calendar-v2-wrapper .rbc-agenda-date-cell {
+    font-weight: bold;
+    color: hsl(var(--primary)) !important;
+    font-size: 0.75rem;
+}
+
+.l2-calendar-v2-wrapper .rbc-agenda-time-cell {
+    font-family: var(--font-mono);
+    color: hsl(var(--muted-foreground));
+    font-size: 0.75rem;
+}
+
+.l2-calendar-v2-wrapper .rbc-agenda-event-cell {
+    font-weight: 500;
+}
+
+.l2-calendar-v2-wrapper .rbc-agenda-empty {
+    padding: 40px;
+    text-align: center;
+    color: hsl(var(--muted-foreground));
+    font-size: 0.85rem;
+}
+
+/* ===== ALLDAY & HEADER CONTENT ===== */
+.l2-calendar-v2-wrapper .rbc-allday-cell {
+    border-top: none !important;
+    border-bottom: 1px solid #1e1e1e !important;
+}
+
+.l2-calendar-v2-wrapper .rbc-time-header-content {
+    border-left: 1px solid #1e1e1e !important;
+}
+
+.l2-calendar-v2-wrapper .rbc-row-content,
+.l2-calendar-v2-wrapper .rbc-row-bg,
+.l2-calendar-v2-wrapper .rbc-row {
+    border-color: #1e1e1e !important;
+}
+
+/* End of stylesheet */

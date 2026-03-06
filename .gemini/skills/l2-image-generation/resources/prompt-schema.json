@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "L2 Systems FRAME Prompt Schema",
+  "description": "JSON Structure for generating L2 Systems visual assets using Nano Banana Pro.",
+  "type": "object",
+  "properties": {
+    "meta": {
+      "type": "object",
+      "properties": {
+        "project": { "type": "string", "default": "L2_Identity" },
+        "aspect_ratio": { "type": "string", "enum": ["4:5", "16:9", "1:1"], "default": "4:5" },
+        "engine": { "type": "string", "const": "Nano Banana Pro" }
+      },
+      "required": ["project", "aspect_ratio"]
+    },
+    "subject": {
+      "description": "F (Focus) - The core subject.",
+      "type": "object",
+      "properties": {
+        "identity_ref": { "type": "string", "description": "Name of the consistent character/object" },
+        "description": { "type": "string", "description": "Physical description" },
+        "action": { "type": "string", "description": "What is it doing?" }
+      },
+      "required": ["description"]
+    },
+    "environment": {
+      "description": "R (Radiance) & M (Matter) - The world context.",
+      "type": "object",
+      "properties": {
+        "location": { "type": "string" },
+        "lighting": { "type": "string", "description": "Must include Rim Light or Volumetric Fog" },
+        "palette": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["location", "lighting"]
+    },
+    "technical": {
+      "description": "A (Angle) & M (Matter) - Camera and Render specs.",
+      "type": "object",
+      "properties": {
+        "camera": { "type": "string", "default": "Hasselblad X2D" },
+        "lens": { "type": "string", "default": "80mm f/1.2" },
+        "texture": { "type": "string", "description": "Imperfections like scratches, dust, grain" },
+        "render_style": { "type": "string", "default": "Photorealistic, Octane Render" }
+      },
+      "required": ["camera", "render_style"]
+    },
+    "text_integration": {
+      "description": "Optional: Text that exists INSIDE the world.",
+      "type": "object",
+      "properties": {
+        "content": { "type": "string" },
+        "style": { "type": "string", "enum": ["Holographic Projection", "Engraved", "Internal Display", "Neon Monolith"] },
+        "font": { "type": "string", "default": "Orbitron" }
+      }
+    }
+  },
+  "required": ["meta", "subject", "environment", "technical"]
+}

@@ -1,0 +1,105 @@
+/* L2 CORE OS Dark Luxury Industrialism overrides for react-big-calendar */
+
+.l2-calendar-wrapper {
+  /* Core colors matching the brand */
+  --rbc-border-color: rgba(255, 255, 255, 0.05);
+  --rbc-text-color: hsl(var(--foreground));
+  --rbc-bg-color: transparent;
+  --rbc-today-bg: rgba(255, 255, 255, 0.03);
+  --rbc-time-header-bg: rgba(0, 0, 0, 0.2);
+  --rbc-time-content-bg: transparent;
+}
+
+.rbc-calendar {
+  font-family: 'Inter', sans-serif;
+}
+
+.rbc-header {
+  border-bottom: 1px solid var(--rbc-border-color);
+  padding: 12px 0;
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: hsl(var(--muted-foreground));
+  background: var(--rbc-time-header-bg);
+  border-left: 1px solid var(--rbc-border-color) !important;
+}
+
+.rbc-month-view, .rbc-time-view, .rbc-agenda-view {
+  border: 1px solid var(--rbc-border-color);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: var(--rbc-bg-color);
+}
+
+.rbc-day-bg {
+  border-left: 1px solid var(--rbc-border-color) !important;
+}
+
+.rbc-month-row {
+  border-top: 1px solid var(--rbc-border-color);
+}
+
+.rbc-off-range-bg {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.rbc-today {
+  background-color: var(--rbc-today-bg);
+}
+
+.rbc-event {
+  background-color: transparent; /* Overridden by inline styles in component */
+  color: var(--rbc-text-color);
+  border-radius: 4px;
+  padding: 0;
+}
+
+.rbc-event-content {
+  height: 100%;
+}
+
+.rbc-toolbar button {
+  color: hsl(var(--foreground));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 0.5rem;
+  transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.rbc-toolbar button:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.rbc-toolbar button:active, .rbc-toolbar button.rbc-active {
+  background: hsl(var(--primary) / 0.2);
+  border-color: hsl(var(--primary) / 0.5);
+  color: hsl(var(--primary));
+  box-shadow: none;
+  background-image: none;
+}
+
+.rbc-time-header-content {
+  border-left: 1px solid var(--rbc-border-color);
+}
+
+.rbc-timeslot-group {
+  border-bottom: 1px solid var(--rbc-border-color);
+}
+
+.rbc-day-slot .rbc-time-slot {
+  border-top: 1px solid rgba(255, 255, 255, 0.02);
+}
+
+.rbc-time-content {
+  border-top: 1px solid var(--rbc-border-color);
+}
+
+.rbc-addons-dnd .rbc-addons-dnd-resizable-month-event {
+  /* Hides default resize handles that look bad */
+  .rbc-addons-dnd-resize-month-event-anchor {
+    display: none;
+  }
+}

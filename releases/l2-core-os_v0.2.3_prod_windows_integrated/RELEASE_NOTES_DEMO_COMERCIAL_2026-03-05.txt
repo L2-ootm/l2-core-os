@@ -1,0 +1,10 @@
+L2 CORE OS — DEMO COMERCIAL (2026-03-05)
+
+Inclui:
+- One-pager comercial (Markdown + HTML + PDF)
+- Pacote instalável cliente MVP
+- Base técnica validada com GO/NO-GO
+
+Uso sugerido:
+- Apresentação de 30 min para piloto clínico
+- Enfatizar baixo custo inicial, segurança e simplicidade operacional

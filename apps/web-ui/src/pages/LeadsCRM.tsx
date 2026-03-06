@@ -1,9 +1,11 @@
 import { GlassCard } from "@/components/ui/glass-card";
 import { StatusPill } from "@/components/ui/status-pill";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/async-state";
-import { Plus, CalendarPlus, Edit3 } from "lucide-react";
+import { Plus, CalendarPlus, Edit3, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
+import { PipelineBoard } from "@/components/Pipeline/PipelineBoard";
+import { DropResult } from "@hello-pangea/dnd";
 
 type Client = {
   id: string;
@@ -20,8 +22,10 @@ type Stage = (typeof stages)[number];
 
 function stageFor(item: Client): Stage {
   if (item.type === "archived") return "Perdido";
-  if (item.classification === "known_client") return "Qualificado";
-  if (item.type === "active") return "Agendado";
+  if (item.classification === "deal_won") return "Fechado";
+  if (item.classification === "in_treatment") return "Em Atendimento";
+  if (item.classification === "scheduled" || item.classification === "known_client") return "Agendado";
+  if (item.classification === "qualified") return "Qualificado";
   return "Novo";
 }
 
@@ -43,15 +47,17 @@ export default function LeadsCRM() {
   const [showClientModal, setShowClientModal] = useState(false);
   const [showApptModal, setShowApptModal] = useState(false);
   const [editing, setEditing] = useState<Client | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
   const [clientForm, setClientForm] = useState({ full_name: "", contact_phone: "", type: "lead" });
   const [apptForm, setApptForm] = useState({ entity_id: "", date_time: "", status: "scheduled" });
+  const [searchQuery, setSearchQuery] = useState("");
 
   async function load() {
     setLoading(true); setError(null);
     try {
       const r = await apiGet<{ ok: boolean; items: Client[] }>("/entities/list?limit=500");
-      setItems((r.items || []).filter((x) => x.type !== "archived"));
+      setItems((r.items || []));
     } catch (e: any) {
       setError(String(e.message || e));
     } finally {
@@ -69,6 +75,52 @@ export default function LeadsCRM() {
     return base;
   }, [items]);
 
+  const onDragEnd = async (result: DropResult) => {
+    const { destination, source, draggableId } = result;
+
+    if (!destination) return;
+    if (destination.droppableId === source.droppableId && destination.index === source.index) return;
+
+    // Find the item
+    const item = items.find(i => i.id === draggableId);
+    if (!item) return;
+
+    // Optimistic update
+    const newStage = destination.droppableId as Stage;
+
+    let newType = item.type;
+    let newClassification = item.classification;
+
+    if (newStage === "Perdido") { newType = "archived"; newClassification = "lost"; }
+    else if (newStage === "Fechado") { newType = "active"; newClassification = "deal_won"; }
+    else if (newStage === "Em Atendimento") { newType = "active"; newClassification = "in_treatment"; }
+    else if (newStage === "Agendado") { newType = "active"; newClassification = "scheduled"; }
+    else if (newStage === "Qualificado") { newType = "lead"; newClassification = "qualified"; }
+    else if (newStage === "Novo") { newType = "lead"; newClassification = "new_lead"; }
+
+    const updatedItems = items.map(i =>
+      i.id === item.id
+        ? { ...i, type: newType, classification: newClassification }
+        : i
+    );
+    setItems(updatedItems);
+
+    // Save to backend
+    try {
+      await apiPost("/entities/upsert", {
+        id: item.id,
+        type: newType,
+        full_name: item.full_name,
+        contact_phone: item.contact_phone,
+        classification: newClassification
+      });
+    } catch (e) {
+      console.error("Failed to save drag drop", e);
+      // Revert on error
+      load();
+    }
+  };
+
   async function saveClient() {
     setLoading(true); setError(null);
     try {
@@ -82,6 +134,20 @@ export default function LeadsCRM() {
       setShowClientModal(false);
       setEditing(null);
       setClientForm({ full_name: "", contact_phone: "", type: "lead" });
+      await load();
+    } catch (e: any) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function confirmDeleteClient() {
+    if (!deleteTarget) return;
+    setLoading(true); setError(null);
+    try {
+      await apiPost("/entities/delete", { id: deleteTarget.id });
+      setDeleteTarget(null);
       await load();
     } catch (e: any) {
       setError(String(e.message || e));
@@ -118,8 +184,8 @@ export default function LeadsCRM() {
           <p className="text-xs text-muted-foreground">Pipeline e base de dados operacional</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => { setEditing(null); setShowClientModal(true); }} className="liquid-btn liquid-btn-primary text-xs flex items-center gap-1.5"><Plus className="h-3.5 w-3.5"/> Novo cliente</button>
-          <button onClick={() => setShowApptModal(true)} className="liquid-btn text-xs flex items-center gap-1.5"><CalendarPlus className="h-3.5 w-3.5"/> Novo agendamento</button>
+          <button onClick={() => { setEditing(null); setShowClientModal(true); }} className="liquid-btn liquid-btn-primary text-xs flex items-center gap-1.5"><Plus className="h-3.5 w-3.5" /> Novo cliente</button>
+          <button onClick={() => setShowApptModal(true)} className="liquid-btn text-xs flex items-center gap-1.5"><CalendarPlus className="h-3.5 w-3.5" /> Novo agendamento</button>
         </div>
       </div>
 
@@ -132,34 +198,36 @@ export default function LeadsCRM() {
       {error && <ErrorState message={error} onRetry={load} />}
 
       {tab === "pipeline" && (
-        <GlassCard className="!p-3">
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6 gap-3">
-            {stages.map((s) => (
-              <div key={s} className="rounded-xl border border-border/30 p-2 min-h-[220px] bg-secondary/10">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">{s}</p>
-                  <span className="text-[10px] bg-secondary/50 rounded-full px-2 py-0.5">{grouped[s].length}</span>
-                </div>
-                <div className="space-y-2 max-h-[65vh] overflow-auto pr-1">
-                  {grouped[s].map((c) => (
-                    <div key={c.id} className={`rounded-xl border border-border/30 border-l-4 ${stageColor[s]} p-2 bg-background/40`}>
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm font-medium truncate">{c.full_name}</p>
-                        <StatusPill status={c.classification || "unknown"} />
-                      </div>
-                      <p className="text-[11px] text-muted-foreground truncate">{c.contact_phone}</p>
-                    </div>
-                  ))}
-                  {grouped[s].length === 0 && <p className="text-[11px] text-muted-foreground">Sem clientes</p>}
-                </div>
-              </div>
-            ))}
-          </div>
-        </GlassCard>
+        <PipelineBoard
+          items={items}
+          onDragEnd={onDragEnd}
+          onCardClick={(c) => {
+            setEditing(c);
+            setClientForm({ full_name: c.full_name, contact_phone: c.contact_phone, type: c.type || "lead" });
+            setShowClientModal(true);
+          }}
+        />
       )}
 
       {tab === "dados" && (
         <GlassCard className="!p-0 overflow-hidden">
+          {/* Search bar */}
+          <div className="p-3 border-b border-border/20 flex items-center gap-3">
+            <div className="flex-1 flex items-center gap-2 bg-secondary/50 rounded-xl px-3 py-2">
+              <Search className="h-3.5 w-3.5 text-muted-foreground" />
+              <input
+                placeholder="Buscar por nome ou telefone..."
+                className="bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none flex-1"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <span className="text-xs text-muted-foreground">{items.filter(c => {
+              if (!searchQuery.trim()) return true;
+              const q = searchQuery.toLowerCase();
+              return c.full_name?.toLowerCase().includes(q) || c.contact_phone?.includes(q);
+            }).length} resultados</span>
+          </div>
           {items.length === 0 ? (
             <div className="p-4"><EmptyState title="Nenhum cliente cadastrado." /></div>
           ) : (
@@ -170,17 +238,27 @@ export default function LeadsCRM() {
                 </tr>
               </thead>
               <tbody>
-                {items.map((c) => (
+                {items.filter(c => {
+                  if (!searchQuery.trim()) return true;
+                  const q = searchQuery.toLowerCase();
+                  return c.full_name?.toLowerCase().includes(q) || c.contact_phone?.includes(q);
+                }).map((c) => (
                   <tr key={c.id}>
                     <td className="text-sm">{c.full_name}</td>
                     <td className="text-xs text-muted-foreground">{c.contact_phone}</td>
                     <td className="text-xs">{c.type}</td>
                     <td><StatusPill status={c.classification || "unknown"} /></td>
                     <td>
-                      <button
-                        onClick={() => { setEditing(c); setClientForm({ full_name: c.full_name, contact_phone: c.contact_phone, type: c.type || "lead" }); setShowClientModal(true); }}
-                        className="liquid-btn-ghost text-xs flex items-center gap-1.5"
-                      ><Edit3 className="h-3.5 w-3.5"/> Editar</button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => { setEditing(c); setClientForm({ full_name: c.full_name, contact_phone: c.contact_phone, type: c.type || "lead" }); setShowClientModal(true); }}
+                          className="liquid-btn-ghost text-xs flex items-center gap-1.5"
+                        ><Edit3 className="h-3.5 w-3.5" /> Editar</button>
+                        <button
+                          onClick={() => setDeleteTarget({ id: c.id, name: c.full_name })}
+                          className="liquid-btn-ghost text-xs flex items-center gap-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10"
+                        ><Trash2 className="h-3.5 w-3.5" /> Excluir</button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -227,6 +305,39 @@ export default function LeadsCRM() {
             <div className="flex justify-end gap-2">
               <button onClick={() => setShowApptModal(false)} className="liquid-btn text-xs">Cancelar</button>
               <button onClick={saveAppointment} className="liquid-btn liquid-btn-primary text-xs">Salvar</button>
+            </div>
+          </GlassCard>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <GlassCard className="w-full max-w-sm space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-full bg-rose-500/15 flex items-center justify-center flex-shrink-0">
+                <Trash2 className="h-5 w-5 text-rose-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Excluir Cliente</h3>
+                <p className="text-xs text-muted-foreground">Esta ação não pode ser desfeita.</p>
+              </div>
+            </div>
+            <p className="text-sm text-foreground">
+              Tem certeza que deseja excluir <b className="text-rose-400">{deleteTarget.name}</b> permanentemente?
+            </p>
+            <p className="text-[11px] text-muted-foreground">
+              Todos os dados do lead, identidade de telefone e mensagens pendentes serão removidos.
+            </p>
+            <div className="flex justify-end gap-2 pt-2 border-t border-border/20">
+              <button onClick={() => setDeleteTarget(null)} className="liquid-btn text-xs px-4 py-2">Cancelar</button>
+              <button
+                onClick={confirmDeleteClient}
+                className="liquid-btn text-xs px-4 py-2 !bg-rose-500/20 !text-rose-400 hover:!bg-rose-500 hover:!text-white border border-rose-500/30 transition-colors"
+                disabled={loading}
+              >
+                {loading ? "Excluindo..." : "Excluir Permanentemente"}
+              </button>
             </div>
           </GlassCard>
         </div>

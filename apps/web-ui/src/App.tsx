@@ -26,7 +26,7 @@ const App = () => (
         <AppLayout>
           <Routes>
             <Route path="/" element={<Dashboard />} />
-            <Route path="/leads" element={<LeadsCRM />} />
+            <Route path="/leads-crm" element={<LeadsCRM />} />
             <Route path="/agenda" element={<Agenda />} />
             <Route path="/whatsapp" element={<WhatsAppInbox />} />
             <Route path="/financeiro" element={<Financeiro />} />

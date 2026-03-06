@@ -1,0 +1,11 @@
+{
+  "ram_gb": 256,
+  "ram_effective_gb": 254,
+  "cpu_logical": 16,
+  "tests": 80,
+  "estimated_p95_ms": 17,
+  "tier": "A",
+  "mode": "local_llm_7b",
+  "allowed_install": true,
+  "reason": "meets_tier_a"
+}

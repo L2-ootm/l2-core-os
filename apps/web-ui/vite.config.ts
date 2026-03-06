@@ -1,7 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
-import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -16,15 +15,31 @@ export default defineConfig(({ mode }) => ({
         target: "http://localhost:8000",
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api/, ""),
+        configure: (proxy) => {
+          proxy.on("error", (_err, _req, res) => {
+            if (res && !res.headersSent) {
+              res.writeHead(502, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: "API backend unavailable" }));
+            }
+          });
+        },
       },
       "/wa": {
         target: "http://localhost:8090",
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/wa/, ""),
+        configure: (proxy) => {
+          proxy.on("error", (_err, _req, res) => {
+            if (res && !res.headersSent) {
+              res.writeHead(502, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ status: "offline", error: "WhatsApp gateway unavailable" }));
+            }
+          });
+        },
       },
     },
   },
-  plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
+  plugins: [react()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

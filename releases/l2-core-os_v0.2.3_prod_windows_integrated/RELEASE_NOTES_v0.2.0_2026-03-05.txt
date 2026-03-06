@@ -1,0 +1,15 @@
+L2 CORE OS — RELEASE NOTES v0.2.0 (2026-03-05)
+
+Highlights:
+- IA funcional por blocos (confirm/cancel/reschedule/triage) via endpoint dedicado
+- Automação inbound WhatsApp -> status de evento
+- Fila de revisão humana + trilha de auditoria
+- Preflight IA v2 (RAM/CPU/p95 + gate de instalação)
+- Wizard web atualizado com botões funcionais de IA
+- E2E GO/NO-GO expandido e validado
+
+Veredito de validação:
+- GO/NO-GO: GO (13 PASS / 0 FAIL)
+
+Artefato de release:
+- L2_CORE_OS_v0.2.0_MVP_2026-03-05.zip

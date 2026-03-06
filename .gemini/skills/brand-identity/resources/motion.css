@@ -1,0 +1,96 @@
+/* 
+   L2 SYSTEMS // MOTION LANGUAGE v1.0
+   Metaphor: "Sliding Obsidian Slabs"
+   Physics: High Friction, Heavy Mass, High Momentum.
+*/
+
+:root {
+    /* -- 1. The Curve (The Physics) -- */
+    /* Intense, immediate movement that snaps into place. No bounce. */
+    --ease-l2-heavy: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-l2-snap: cubic-bezier(0.12, 0, 0.39, 0);
+    /* For exits */
+    --ease-l2-linear: cubic-bezier(0.5, 0, 0.5, 1);
+    /* For continuous loops */
+
+    /* -- 2. The Speed (The Timing) -- */
+    /* Micro-interactions (Hover, Click) - Instant feedback */
+    --duration-instant: 100ms;
+    --duration-fast: 200ms;
+
+    /* Macro-interactions (Modal Open, Page Slide) - Deliberate weight */
+    --duration-normal: 400ms;
+    --duration-slow: 600ms;
+
+    /* -- 3. Composition Utility Classes -- */
+}
+
+/* Base Transition */
+.l2-transition {
+    transition-property: all;
+    transition-timing-function: var(--ease-l2-heavy);
+    transition-duration: var(--duration-fast);
+}
+
+/* Hover Effect: "The Rise" - Element lifts slightly and glows */
+.l2-hover-lift {
+    transition: transform var(--duration-fast) var(--ease-l2-heavy),
+        box-shadow var(--duration-fast) var(--ease-l2-heavy);
+}
+
+.l2-hover-lift:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 40px -10px rgba(127, 0, 255, 0.3);
+    /* Electric Violet Glow */
+}
+
+/* Entrance Animation: "The Slide" */
+@keyframes l2-slide-in {
+    0% {
+        opacity: 0;
+        transform: translateY(20px) scale(0.98);
+        filter: blur(4px);
+    }
+
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        filter: blur(0);
+    }
+}
+
+.l2-animate-enter {
+    animation: l2-slide-in var(--duration-normal) var(--ease-l2-heavy) forwards;
+}
+
+/* Stagger Delays for Lists */
+.l2-stagger-1 {
+    animation-delay: 50ms;
+}
+
+.l2-stagger-2 {
+    animation-delay: 100ms;
+}
+
+.l2-stagger-3 {
+    animation-delay: 150ms;
+}
+
+/* Continuous Animation: "The Idle Thrum" */
+@keyframes l2-thrum {
+    0% {
+        border-color: rgba(255, 255, 255, 0.05);
+    }
+
+    50% {
+        border-color: rgba(127, 0, 255, 0.4);
+    }
+
+    100% {
+        border-color: rgba(255, 255, 255, 0.05);
+    }
+}
+
+.l2-status-pulse {
+    animation: l2-thrum 3s infinite ease-in-out;
+}

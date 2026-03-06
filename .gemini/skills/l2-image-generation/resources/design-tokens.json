@@ -1,0 +1,145 @@
+{
+    "meta": {
+        "version": "1.0",
+        "brand": "L2 Systems",
+        "aesthetic": "Dark Luxury Industrialism"
+    },
+    "colors": {
+        "primary": {
+            "void": {
+                "hex": "#050505",
+                "rgb": "5, 5, 5",
+                "usage": "Main background, 90% of surfaces"
+            },
+            "electric-violet": {
+                "hex": "#7F00FF",
+                "rgb": "127, 0, 255",
+                "usage": "Primary accent, CTAs, brand highlight"
+            },
+            "cyber-blue": {
+                "hex": "#00F0FF",
+                "rgb": "0, 240, 255",
+                "usage": "Secondary accent, data visualization, status:active"
+            },
+            "phantom-white": {
+                "hex": "#F5F5F5",
+                "rgb": "245, 245, 245",
+                "usage": "Primary text (never use pure #FFFFFF)"
+            }
+        },
+        "secondary": {
+            "titanium": {
+                "hex": "#1F1F1F",
+                "usage": "Secondary backgrounds, cards, panels"
+            },
+            "carbon": {
+                "hex": "#141414",
+                "usage": "Inner containers, inputs, dividers"
+            },
+            "error-red": {
+                "hex": "#FF003C",
+                "usage": "Critical alerts, system failures"
+            },
+            "success-green": {
+                "hex": "#00FF94",
+                "usage": "Success states, growth metrics"
+            }
+        },
+        "gradients": {
+            "the-pulse": "linear-gradient(135deg, #7F00FF 0%, #00F0FF 100%)",
+            "the-deep": "radial-gradient(circle at center, #1F1F1F 0%, #050505 100%)"
+        }
+    },
+    "typography": {
+        "primary": {
+            "font": "Inter or Aeonik",
+            "fallback": "system-ui, sans-serif",
+            "weights": {
+                "display": "700 (Bold)",
+                "heading": "600 (Semi-Bold)",
+                "body": "400 (Regular)"
+            },
+            "tracking": {
+                "display": "-2%",
+                "heading": "-1%",
+                "body": "0%"
+            }
+        },
+        "secondary": {
+            "font": "JetBrains Mono or Space Mono",
+            "usage": "Labels, tags, data readouts, code",
+            "weights": {
+                "tech-labels": "500 (Medium)",
+                "code": "400 (Regular)"
+            }
+        }
+    },
+    "materials-3d": {
+        "obsidian": {
+            "base-color": "#050505",
+            "roughness": 0.05,
+            "metallic": 0.0,
+            "description": "Highly polished black glass, deep reflections"
+        },
+        "brushed-titanium": {
+            "base-color": "#1F1F1F",
+            "roughness": 0.4,
+            "metallic": 1.0,
+            "description": "Industrial matte metal with horizontal brush texture"
+        },
+        "holographic-glass": {
+            "transmission": 1.0,
+            "roughness": 0.1,
+            "ior": 1.45,
+            "emission": "Edge glow in Electric Violet or Cyber Blue"
+        }
+    },
+    "lighting": {
+        "key-light": "Soft area light from top-left, 5000K cool white",
+        "rim-light": "Strong back-lighting in Electric Violet or Cyber Blue",
+        "volumetric-fog": "Subtle dark haze, visible light beams",
+        "environment": "Studio dark, no HDRI daylight"
+    },
+    "effects": {
+        "film-grain": {
+            "opacity": "3-5%",
+            "purpose": "Softens digital sharpness"
+        },
+        "bloom": {
+            "threshold": 0.6,
+            "intensity": 1.2,
+            "radius": "Broad soft glow"
+        },
+        "chromatic-aberration": {
+            "shift": "0.5px",
+            "purpose": "Adds lens feel"
+        },
+        "vignette": "Heavy soft vignette to focus center"
+    },
+    "prompt-keywords": {
+        "must-use": [
+            "obsidian",
+            "brushed titanium",
+            "volumetric fog",
+            "rim lighting",
+            "shallow depth of field f/1.8",
+            "8k resolution",
+            "Unreal Engine 5",
+            "cinematic",
+            "photorealistic",
+            "raytracing"
+        ],
+        "forbidden": [
+            "flat design",
+            "cartoon",
+            "illustration",
+            "vector art",
+            "white background",
+            "bright daylight",
+            "sunny",
+            "pastel colors",
+            "low poly",
+            "pixel art"
+        ]
+    }
+}
