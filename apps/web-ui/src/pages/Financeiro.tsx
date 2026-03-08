@@ -1,7 +1,7 @@
 import { GlassCard } from "@/components/ui/glass-card";
 import { KPICard } from "@/components/ui/kpi-card";
 import { StatusPill } from "@/components/ui/status-pill";
-import { Download, ArrowUpRight, TrendingUp, TrendingDown, AlertTriangle, Plus, ChevronsUpDown, Check, Filter, Edit3, Clock, XCircle, Trash2 } from "lucide-react";
+import { Download, ArrowUpRight, TrendingUp, TrendingDown, AlertTriangle, Plus, ChevronsUpDown, Check, Filter, Edit3, Clock, XCircle, Trash2, RefreshCw, Pause, Play } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { useEffect, useMemo, useState } from "react";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -24,6 +24,21 @@ type Tx = {
   source_kind?: "patient" | "non_patient";
   source_origin?: "manual_dashboard" | "whatsapp_ai" | "automation";
   notes?: string;
+};
+
+type RecurringTx = {
+  id: string;
+  entity_id?: string;
+  amount: string;
+  type: "income" | "expense";
+  category: string;
+  frequency: "daily" | "weekly" | "monthly";
+  start_date: string;
+  end_date?: string;
+  last_created_at?: string;
+  status: "active" | "paused";
+  created_at: string;
+  updated_at: string;
 };
 
 const tooltipStyle = {
@@ -113,6 +128,99 @@ export default function Financeiro() {
   const [filterCategory, setFilterCategory] = useState<string>("all");
   const [patientSearchOpen, setPatientSearchOpen] = useState(false);
 
+  const [activeTab, setActiveTab] = useState<"transactions" | "recurring">("transactions");
+  const [recurringTxs, setRecurringTxs] = useState<RecurringTx[]>([]);
+  const [openRecurringForm, setOpenRecurringForm] = useState(false);
+  const [deletingRecurringId, setDeletingRecurringId] = useState<string | null>(null);
+
+  const [recurringForm, setRecurringForm] = useState({
+    id: "",
+    entity_id: "",
+    amount: "",
+    type: "income",
+    category: "consulta",
+    frequency: "monthly",
+    start_date: new Date().toISOString().split("T")[0],
+    end_date: "",
+  });
+
+  async function loadRecurring() {
+    try {
+      const r = await apiGet<{ ok: boolean; items: RecurringTx[] }>("/finance/recurring");
+      if (r?.ok && r.items) {
+        setRecurringTxs(r.items);
+      }
+    } catch (e) {
+      console.error("Error loading recurring:", e);
+    }
+  }
+
+  async function submitRecurring() {
+    setLoading(true);
+    setError(null);
+    try {
+      const payload: any = {
+        amount: recurringForm.amount.replace("R$ ", "").replace(".", "").replace(",", "."),
+        type: recurringForm.type,
+        category: recurringForm.category,
+        frequency: recurringForm.frequency,
+        start_date: recurringForm.start_date,
+        end_date: recurringForm.end_date || null,
+        entity_id: recurringForm.entity_id || null,
+      };
+      if (recurringForm.id) {
+        await apiPost(`/finance/recurring/${recurringForm.id}`, payload);
+      } else {
+        await apiPost("/finance/recurring", payload);
+      }
+      setOpenRecurringForm(false);
+      setRecurringForm({ id: "", entity_id: "", amount: "", type: "income", category: "consulta", frequency: "monthly", start_date: new Date().toISOString().split("T")[0], end_date: "" });
+      await loadRecurring();
+    } catch (e: any) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function toggleRecurringStatus(rec: RecurringTx) {
+    setLoading(true);
+    try {
+      const newStatus = rec.status === "active" ? "paused" : "active";
+      await apiPost(`/finance/recurring/${rec.id}`, { status: newStatus });
+      await loadRecurring();
+    } catch (e: any) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function triggerRecurring(recId: string) {
+    setLoading(true);
+    try {
+      await apiPost(`/finance/recurring/${recId}/trigger`);
+      await loadAll();
+    } catch (e: any) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteRecurring(recId: string) {
+    setLoading(true);
+    try {
+      await apiPost(`/finance/recurring/${recId}`, {}, { method: "DELETE" });
+      await loadRecurring();
+    } catch (e: any) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+      setDeletingRecurringId(null);
+    }
+  }
+
   async function loadAll() {
     setLoading(true);
     setError(null);
@@ -135,7 +243,7 @@ export default function Financeiro() {
     }
   }
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { loadAll(); loadRecurring(); }, []);
 
   const chart = useMemo(() => {
     const byDay: Record<string, { receita: number; despesa: number }> = {};
@@ -292,6 +400,85 @@ export default function Financeiro() {
         </div>
       </GlassCard>
 
+      <div className="flex items-center gap-2 bg-black/40 p-1 rounded-xl border border-white/5 w-fit">
+        <button
+          onClick={() => setActiveTab("transactions")}
+          className={`px-4 py-2 rounded-lg text-xs font-medium transition-all ${activeTab === "transactions" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+        >
+          Transações
+        </button>
+        <button
+          onClick={() => setActiveTab("recurring")}
+          className={`px-4 py-2 rounded-lg text-xs font-medium transition-all ${activeTab === "recurring" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+        >
+          Transações recorrentes
+        </button>
+      </div>
+
+      {activeTab === "recurring" && (
+        <div className="space-y-4">
+          <div className="flex justify-end">
+            <button
+              onClick={() => { setRecurringForm({ id: "", entity_id: "", amount: "", type: "income", category: "consulta", frequency: "monthly", start_date: new Date().toISOString().split("T")[0], end_date: "" }); setOpenRecurringForm(true); }}
+              className="liquid-btn liquid-btn-primary flex items-center gap-2 text-xs"
+            >
+              <Plus className="h-3.5 w-3.5" /> Nova recorrência
+            </button>
+          </div>
+
+          <GlassCard className="!p-0 overflow-hidden">
+            <table className="premium-table">
+              <thead>
+                <tr>
+                  <th>Categoria</th>
+                  <th>Frequência</th>
+                  <th>Valor</th>
+                  <th>Início</th>
+                  <th>Última criação</th>
+                  <th>Status</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recurringTxs.length === 0 ? (
+                  <tr><td colSpan={7} className="text-center py-8 text-muted-foreground text-xs"><div className="flex justify-center"><RefreshCw className="w-5 h-5 mb-2 opacity-50" /></div>Nenhuma transação recorrente encontrada</td></tr>
+                ) : recurringTxs.map((rec) => (
+                  <tr key={rec.id} className="hover:bg-white/5 transition-colors">
+                    <td className="text-sm text-foreground">{rec.category || "outros"}</td>
+                    <td className="text-xs text-muted-foreground capitalize">{rec.frequency === "monthly" ? "Mensal" : rec.frequency === "weekly" ? "Semanal" : "Diária"}</td>
+                    <td className={`text-sm font-medium ${rec.type === "income" ? "text-success" : "text-destructive"}`}>{rec.type === "expense" ? "-" : "+"}R$ {rec.amount}</td>
+                    <td className="text-xs text-muted-foreground font-mono">{(rec.start_date || "").slice(0, 10)}</td>
+                    <td className="text-xs text-muted-foreground font-mono">{rec.last_created_at ? rec.last_created_at.slice(0, 10) : "—"}</td>
+                    <td>
+                      <span className={`px-2 py-1 rounded-full text-xs ${rec.status === "active" ? "bg-success/20 text-success" : "bg-warning/20 text-warning"}`}>
+                        {rec.status === "active" ? "Ativa" : "Pausada"}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => toggleRecurringStatus(rec)} className="p-1.5 rounded-lg bg-secondary/30 hover:bg-secondary/60 transition-colors text-muted-foreground hover:text-foreground" title={rec.status === "active" ? "Pausar" : "Ativar"}>
+                          {rec.status === "active" ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                        </button>
+                        <button onClick={() => triggerRecurring(rec.id)} className="p-1.5 rounded-lg bg-secondary/30 hover:bg-secondary/60 transition-colors text-muted-foreground hover:text-foreground" title="Executar agora">
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => { setRecurringForm({ id: rec.id, entity_id: rec.entity_id || "", amount: rec.amount, type: rec.type, category: rec.category, frequency: rec.frequency, start_date: rec.start_date, end_date: rec.end_date || "" }); setOpenRecurringForm(true); }} className="p-1.5 rounded-lg bg-secondary/30 hover:bg-secondary/60 transition-colors text-muted-foreground hover:text-foreground" title="Editar">
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => setDeletingRecurringId(rec.id)} className="p-1.5 rounded-lg bg-transparent hover:bg-destructive/20 transition-colors text-muted-foreground/50 hover:text-destructive" title="Excluir">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </GlassCard>
+        </div>
+      )}
+
+      {activeTab === "transactions" && (
       <GlassCard className="!p-0 overflow-hidden">
         <div className="p-4 border-b border-border/30 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <h3 className="text-sm font-semibold text-foreground">Transações</h3>
@@ -347,8 +534,9 @@ export default function Financeiro() {
           </tbody>
         </table>
       </GlassCard>
+      )}
 
-      {openForm && (
+      {openRecurringForm && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <GlassCard className="w-full max-w-2xl space-y-4">
             <h3 className="text-sm font-semibold">Nova entrada financeira</h3>
@@ -435,6 +623,99 @@ export default function Financeiro() {
         </div>
       )}
 
+      {openRecurringForm && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <GlassCard className="w-full max-w-2xl space-y-4">
+            <h3 className="text-sm font-semibold">{recurringForm.id ? "Editar recorrência" : "Nova transação recorrente"}</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-muted-foreground">Tipo</label>
+                <select className="w-full mt-1 bg-secondary/50 rounded-xl px-3 py-2 text-sm" value={recurringForm.type} onChange={(e) => setRecurringForm({ ...recurringForm, type: e.target.value })}>
+                  <option value="income">Entrada</option>
+                  <option value="expense">Saída</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Valor</label>
+                <input className="w-full mt-1 bg-secondary/50 rounded-xl px-3 py-2 text-sm" placeholder="Ex: 450.00" value={recurringForm.amount} onChange={(e) => setRecurringForm({ ...recurringForm, amount: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Frequência</label>
+                <select className="w-full mt-1 bg-secondary/50 rounded-xl px-3 py-2 text-sm" value={recurringForm.frequency} onChange={(e) => setRecurringForm({ ...recurringForm, frequency: e.target.value })}>
+                  <option value="daily">Diária</option>
+                  <option value="weekly">Semanal</option>
+                  <option value="monthly">Mensal</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Categoria</label>
+                <select className="w-full mt-1 bg-secondary/50 rounded-xl px-3 py-2 text-sm" value={recurringForm.category} onChange={(e) => setRecurringForm({ ...recurringForm, category: e.target.value })}>
+                  {allCategories.map((c: string) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Data de início</label>
+                <input type="date" className="w-full mt-1 bg-secondary/50 rounded-xl px-3 py-2 text-sm" value={recurringForm.start_date} onChange={(e) => setRecurringForm({ ...recurringForm, start_date: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Data de término (opcional)</label>
+                <input type="date" className="w-full mt-1 bg-secondary/50 rounded-xl px-3 py-2 text-sm" value={recurringForm.end_date} onChange={(e) => setRecurringForm({ ...recurringForm, end_date: e.target.value })} />
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs text-muted-foreground mb-1 block">Paciente associado (opcional)</label>
+                <Popover open={patientSearchOpen} onOpenChange={setPatientSearchOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      role="combobox"
+                      aria-expanded={patientSearchOpen}
+                      className="w-full bg-secondary/50 rounded-xl px-3 py-2.5 text-sm flex items-center justify-between text-left hover:bg-secondary/70 transition-colors border border-border/30 hover:border-primary/50"
+                    >
+                      {recurringForm.entity_id
+                        ? <span className="text-foreground">{entities.find((e) => e.id === recurringForm.entity_id)?.full_name}</span>
+                        : <span className="text-muted-foreground font-medium">Selecione ou busque um paciente...</span>}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[400px] max-w-[90vw] p-0 border-border/50 bg-black/95 backdrop-blur-xl z-[60]">
+                    <Command className="bg-transparent text-foreground">
+                      <CommandInput placeholder="Buscar por nome..." className="h-10 text-sm border-none focus:ring-0" />
+                      <CommandList className="max-h-[250px] overflow-y-auto">
+                        <CommandEmpty className="py-6 text-center text-xs text-muted-foreground">Nenhum paciente encontrado.</CommandEmpty>
+                        <CommandGroup>
+                          {entities.map((e) => (
+                            <CommandItem
+                              key={e.id}
+                              value={e.full_name}
+                              onSelect={() => {
+                                setRecurringForm({ ...recurringForm, entity_id: e.id });
+                                setPatientSearchOpen(false);
+                              }}
+                              className="cursor-pointer hover:bg-primary/20 hover:text-primary transition-colors aria-selected:bg-primary/20 aria-selected:text-primary"
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-4 w-4 text-primary",
+                                  recurringForm.entity_id === e.id ? "opacity-100" : "opacity-0"
+                                )}
+                              />
+                              {e.full_name} <span className="ml-auto text-xs text-muted-foreground font-mono">{e.contact_phone}</span>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setOpenRecurringForm(false)} className="liquid-btn text-xs">Cancelar</button>
+              <button onClick={submitRecurring} className="liquid-btn liquid-btn-primary text-xs">{recurringForm.id ? "Salvar" : "Criar recorrência"}</button>
+            </div>
+          </GlassCard>
+        </div>
+      )}
+
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={!!deletingTxId} onOpenChange={(o) => !o && setDeletingTxId(null)}>
         <AlertDialogContent className="bg-[#0A0A0A] border-border/20 text-foreground">
@@ -453,6 +734,28 @@ export default function Financeiro() {
               className="bg-destructive/20 text-destructive border-transparent hover:bg-destructive hover:text-white"
             >
               Excluir Transação
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!deletingRecurringId} onOpenChange={(o) => !o && setDeletingRecurringId(null)}>
+        <AlertDialogContent className="bg-[#0A0A0A] border-border/20 text-foreground">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-destructive flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5" /> Confirmar Exclusão
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground">
+              Tem certeza que deseja excluir esta transação recorrente? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-transparent border-white/10 hover:bg-white/5 hover:text-white">Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deletingRecurringId && deleteRecurring(deletingRecurringId)}
+              className="bg-destructive/20 text-destructive border-transparent hover:bg-destructive hover:text-white"
+            >
+              Excluir Recorrência
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

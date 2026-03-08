@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, Users, Calendar, MessageCircle, DollarSign,
-  Cpu, FileText, Settings, Shield
+  Cpu, FileText, Settings, Shield, Kanban
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -12,6 +12,7 @@ import {
 const modules = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Leads & CRM", url: "/leads", icon: Users },
+  { title: "Pipeline", url: "/pipeline", icon: Kanban },
   { title: "Agenda", url: "/agenda", icon: Calendar },
   { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
   { title: "Financeiro", url: "/financeiro", icon: DollarSign },

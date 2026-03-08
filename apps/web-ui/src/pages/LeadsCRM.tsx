@@ -1,7 +1,7 @@
 import { GlassCard } from "@/components/ui/glass-card";
 import { StatusPill } from "@/components/ui/status-pill";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/async-state";
-import { Plus, CalendarPlus, Edit3, Search, Trash2 } from "lucide-react";
+import { Plus, CalendarPlus, Edit3, Search, Trash2, DollarSign, ChevronDown } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { PipelineBoard } from "@/components/Pipeline/PipelineBoard";
@@ -13,7 +13,16 @@ type Client = {
   contact_phone: string;
   type: string;
   classification: string;
+  pipeline_stage?: string;
+  pipeline_value?: number;
   updated_at?: string;
+};
+
+type PipelineStage = {
+  id: string;
+  name: string;
+  order_index: number;
+  color: string;
 };
 
 const stages = ["Novo", "Qualificado", "Agendado", "Em Atendimento", "Fechado", "Perdido"] as const;
@@ -38,26 +47,62 @@ const stageColor: Record<Stage, string> = {
   "Perdido": "border-l-rose-400",
 };
 
+const stageIdMap: Record<string, string> = {
+  "Novo": "novo",
+  "Qualificado": "qualificado",
+  "Agendado": "agendado",
+  "Em Atendimento": "consulta",
+  "Fechado": "fechado",
+  "Perdido": "perdido",
+};
+
+const idStageMap: Record<string, string> = {
+  "novo": "Novo",
+  "qualificado": "Qualificado",
+  "agendado": "Agendado",
+  "consulta": "Em Atendimento",
+  "fechado": "Fechado",
+  "perdido": "Perdido",
+};
+
+const stageColorMap: Record<string, string> = {
+  "novo": "#3b82f6",
+  "qualificado": "#8b5cf6",
+  "agendado": "#f59e0b",
+  "consulta": "#10b981",
+  "fechado": "#22c55e",
+  "perdido": "#ef4444",
+};
+
 export default function LeadsCRM() {
   const [tab, setTab] = useState<"pipeline" | "dados">("pipeline");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<Client[]>([]);
+  const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([]);
 
   const [showClientModal, setShowClientModal] = useState(false);
   const [showApptModal, setShowApptModal] = useState(false);
+  const [showValueModal, setShowValueModal] = useState(false);
   const [editing, setEditing] = useState<Client | null>(null);
+  const [valueTarget, setValueTarget] = useState<Client | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [quickMoveTarget, setQuickMoveTarget] = useState<Client | null>(null);
 
   const [clientForm, setClientForm] = useState({ full_name: "", contact_phone: "", type: "lead" });
   const [apptForm, setApptForm] = useState({ entity_id: "", date_time: "", status: "scheduled" });
+  const [valueForm, setValueForm] = useState({ value: "" });
   const [searchQuery, setSearchQuery] = useState("");
 
   async function load() {
     setLoading(true); setError(null);
     try {
-      const r = await apiGet<{ ok: boolean; items: Client[] }>("/entities/list?limit=500");
+      const [r, stagesRes] = await Promise.all([
+        apiGet<{ ok: boolean; items: Client[] }>("/entities/list?limit=500"),
+        apiGet<{ ok: boolean; items: PipelineStage[] }>("/pipeline/stages").catch(() => ({ ok: true, items: [] })),
+      ]);
       setItems((r.items || []));
+      setPipelineStages(stagesRes.items || []);
     } catch (e: any) {
       setError(String(e.message || e));
     } finally {
@@ -81,12 +126,11 @@ export default function LeadsCRM() {
     if (!destination) return;
     if (destination.droppableId === source.droppableId && destination.index === source.index) return;
 
-    // Find the item
     const item = items.find(i => i.id === draggableId);
     if (!item) return;
 
-    // Optimistic update
     const newStage = destination.droppableId as Stage;
+    const newStageId = stageIdMap[newStage];
 
     let newType = item.type;
     let newClassification = item.classification;
@@ -100,23 +144,18 @@ export default function LeadsCRM() {
 
     const updatedItems = items.map(i =>
       i.id === item.id
-        ? { ...i, type: newType, classification: newClassification }
+        ? { ...i, type: newType, classification: newClassification, pipeline_stage: newStageId }
         : i
     );
     setItems(updatedItems);
 
-    // Save to backend
     try {
-      await apiPost("/entities/upsert", {
-        id: item.id,
-        type: newType,
-        full_name: item.full_name,
-        contact_phone: item.contact_phone,
-        classification: newClassification
+      await apiPost(`/entities/${item.id}/pipeline/move`, {
+        stage_id: newStageId,
+        value: item.pipeline_value || null,
       });
     } catch (e) {
       console.error("Failed to save drag drop", e);
-      // Revert on error
       load();
     }
   };
@@ -176,6 +215,48 @@ export default function LeadsCRM() {
     }
   }
 
+  async function saveValue() {
+    if (!valueTarget || !valueForm.value) return;
+    setLoading(true);
+    try {
+      await apiPost(`/entities/${valueTarget.id}/pipeline/move`, {
+        stage_id: valueTarget.pipeline_stage || "novo",
+        value: parseFloat(valueForm.value),
+      });
+      setShowValueModal(false);
+      setValueTarget(null);
+      setValueForm({ value: "" });
+      load();
+    } catch (e: any) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function quickMove(client: Client, newStageId: string) {
+    const updatedItems = items.map(i =>
+      i.id === client.id ? { ...i, pipeline_stage: newStageId } : i
+    );
+    setItems(updatedItems);
+    setQuickMoveTarget(null);
+
+    try {
+      await apiPost(`/entities/${client.id}/pipeline/move`, {
+        stage_id: newStageId,
+        value: client.pipeline_value || null,
+      });
+    } catch (e) {
+      console.error("Failed to quick move", e);
+      load();
+    }
+  }
+
+  const formatCurrency = (val?: number) => {
+    if (!val) return null;
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+  };
+
   return (
     <div className="space-y-5 animate-in-fade">
       <div className="flex items-center justify-between gap-3">
@@ -234,7 +315,7 @@ export default function LeadsCRM() {
             <table className="premium-table">
               <thead>
                 <tr>
-                  <th>Nome</th><th>Telefone</th><th>Tipo</th><th>Classificação</th><th>Ações</th>
+                  <th>Nome</th><th>Telefone</th><th>Etapa</th><th>Valor</th><th>Classificação</th><th>Ações</th>
                 </tr>
               </thead>
               <tbody>
@@ -246,7 +327,45 @@ export default function LeadsCRM() {
                   <tr key={c.id}>
                     <td className="text-sm">{c.full_name}</td>
                     <td className="text-xs text-muted-foreground">{c.contact_phone}</td>
-                    <td className="text-xs">{c.type}</td>
+                    <td>
+                      <div className="relative">
+                        <button
+                          onClick={() => setQuickMoveTarget(quickMoveTarget?.id === c.id ? null : c)}
+                          className="flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-border/30 hover:bg-secondary/50 transition-colors"
+                          style={{ 
+                            borderLeftColor: stageColorMap[c.pipeline_stage || 'novo'],
+                            borderLeftWidth: '3px'
+                          }}
+                        >
+                          <span>{idStageMap[c.pipeline_stage || 'novo'] || 'Novo'}</span>
+                          <ChevronDown className="h-3 w-3" />
+                        </button>
+                        {quickMoveTarget?.id === c.id && (
+                          <div className="absolute z-10 mt-1 py-1 bg-[#1a1a1a] border border-border/30 rounded-md shadow-lg min-w-[140px]">
+                            {Object.entries(idStageMap).map(([stageId, stageName]) => (
+                              <button
+                                key={stageId}
+                                onClick={() => quickMove(c, stageId)}
+                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-secondary/50 transition-colors ${
+                                  c.pipeline_stage === stageId ? 'bg-secondary/50 text-primary' : ''
+                                }`}
+                              >
+                                {stageName}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      <button
+                        onClick={() => { setValueTarget(c); setValueForm({ value: String(c.pipeline_value || "") }); setShowValueModal(true); }}
+                        className="flex items-center gap-1 text-xs text-emerald-400 hover:text-emerald-300"
+                      >
+                        <DollarSign className="h-3 w-3" />
+                        {formatCurrency(c.pipeline_value) || 'Definir'}
+                      </button>
+                    </td>
                     <td><StatusPill status={c.classification || "unknown"} /></td>
                     <td>
                       <div className="flex items-center gap-1">
@@ -338,6 +457,30 @@ export default function LeadsCRM() {
               >
                 {loading ? "Excluindo..." : "Excluir Permanentemente"}
               </button>
+            </div>
+          </GlassCard>
+        </div>
+      )}
+
+      {/* Value Modal */}
+      {showValueModal && valueTarget && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <GlassCard className="w-full max-w-md space-y-3">
+            <h3 className="text-sm font-semibold">Definir Valor do Lead</h3>
+            <p className="text-xs text-muted-foreground">
+              Valor potencial para {valueTarget.full_name}
+            </p>
+            <input
+              type="number"
+              step="0.01"
+              className="w-full bg-secondary/50 rounded-xl px-3 py-2 text-sm"
+              placeholder="0,00"
+              value={valueForm.value}
+              onChange={(e) => setValueForm({ ...valueForm, value: e.target.value })}
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowValueModal(false)} className="liquid-btn text-xs">Cancelar</button>
+              <button onClick={saveValue} className="liquid-btn liquid-btn-primary text-xs">Salvar</button>
             </div>
           </GlassCard>
         </div>

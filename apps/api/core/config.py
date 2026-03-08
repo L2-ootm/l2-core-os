@@ -36,5 +36,8 @@ class Settings(BaseModel):
     redis_url: str = os.getenv("REDIS_URL", "redis://redis:6379/0")
     baileys_internal_token: str = os.getenv("BAILEYS_INTERNAL_TOKEN", "change_internal_token")
 
+    ollama_url: str = os.getenv("OLLAMA_URL", "http://ollama:11434")
+    ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
+
 
 settings = Settings()

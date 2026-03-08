@@ -13,6 +13,7 @@ import Automacao from "./pages/Automacao";
 import Documentos from "./pages/Documentos";
 import Configuracoes from "./pages/Configuracoes";
 import Auditoria from "./pages/Auditoria";
+import Pipeline from "./pages/Pipeline";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -26,7 +27,9 @@ const App = () => (
         <AppLayout>
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/leads" element={<LeadsCRM />} />
             <Route path="/leads-crm" element={<LeadsCRM />} />
+            <Route path="/pipeline" element={<Pipeline />} />
             <Route path="/agenda" element={<Agenda />} />
             <Route path="/whatsapp" element={<WhatsAppInbox />} />
             <Route path="/financeiro" element={<Financeiro />} />

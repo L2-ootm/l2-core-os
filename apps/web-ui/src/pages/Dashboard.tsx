@@ -4,7 +4,8 @@ import { KPICard } from "@/components/ui/kpi-card";
 import { StatusPill } from "@/components/ui/status-pill";
 import {
   Users, CheckCircle, XCircle, DollarSign, Clock, MessageCircle,
-  AlertTriangle, TrendingUp, X
+  AlertTriangle, TrendingUp, X, Calendar, Activity, Zap, Plus,
+  FileText, Send, Shield, Cpu, Database, Wifi, RefreshCw
 } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
 import { useEffect, useState } from "react";
@@ -26,7 +27,7 @@ const CustomTooltipStyle = {
 
 export default function Dashboard() {
   const [summary, setSummary] = useState<any>(null);
-  const [financeSummary, setFinanceSummary] = useState<any>(null); // New state for syncing
+  const [financeSummary, setFinanceSummary] = useState<any>(null);
   const [classifications, setClassifications] = useState<any>(null);
   const [waStatus, setWaStatus] = useState<any>(null);
   const [hardware, setHardware] = useState<any>(null);
@@ -34,10 +35,14 @@ export default function Dashboard() {
   const [qrNonce, setQrNonce] = useState(Date.now());
   const [busyWa, setBusyWa] = useState(false);
 
-  // Dynamic Chart & Alert Data
   const [revenueData, setRevenueData] = useState<any[]>([]);
   const [confirmData, setConfirmData] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<any[]>([]);
+
+  const [upcomingEvents, setUpcomingEvents] = useState<any[]>([]);
+  const [todayEvents, setTodayEvents] = useState<any[]>([]);
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [systemHealth, setSystemHealth] = useState<any>(null);
 
   const { notifications: aiNotifications, dismissNotification, executeAction, activeMotor } = useAIIntent();
 
@@ -55,21 +60,30 @@ export default function Dashboard() {
 
   useEffect(() => {
     async function loadDashboard() {
-      // Each request is independent — one failure must NOT block the others
-      const [sResult, cResult, wResult, fResult, hResult, eResult] = await Promise.allSettled([
+      const [sResult, cResult, wResult, fResult, hResult, eResult, aResult, healthResult] = await Promise.allSettled([
         apiGet<any>("/ops/inbound/summary"),
         apiGet<any>("/ops/leads/classifications"),
         waGet<any>("/session/status"),
-        apiGet<any>("/finance/transactions/list"),
+        apiGet<any>("/transactions/list"),
         apiGet<any>("/system/hardware"),
         apiGet<any>("/events/list?limit=500"),
+        apiGet<any>("/audit/logs?limit=10"),
+        apiGet<any>("/ops/gonogo/checklist"),
       ]);
 
       if (sResult.status === "fulfilled") setSummary(sResult.value);
       if (cResult.status === "fulfilled") setClassifications(cResult.value?.classifications || null);
       if (wResult.status === "fulfilled") setWaStatus(wResult.value);
-      else setWaStatus({ status: "offline", reconnect_attempts: 0 }); // Graceful fallback
+      else setWaStatus({ status: "offline", reconnect_attempts: 0 });
       if (hResult.status === "fulfilled") setHardware(hResult.value);
+
+      if (aResult.status === "fulfilled") {
+        setAuditLogs(aResult.value?.items || []);
+      }
+
+      if (healthResult.status === "fulfilled") {
+        setSystemHealth(healthResult.value);
+      }
 
       const newAlerts: any[] = [];
       if (wResult.status === "rejected" || wResult.value?.status !== "connected") {
@@ -107,6 +121,26 @@ export default function Dashboard() {
 
       if (eResult.status === "fulfilled") {
         const events = eResult.value?.items || [];
+        
+        const now = new Date();
+        const todayStr = now.toISOString().split('T')[0];
+        
+        const todayEventsList = events.filter((e: any) => 
+          (e.scheduled_for || "").startsWith(todayStr) && e.status !== 'cancelled'
+        ).sort((a: any, b: any) => (a.scheduled_for || '').localeCompare(b.scheduled_for || ''));
+        setTodayEvents(todayEventsList);
+
+        const next3Days: string[] = [];
+        for (let i = 0; i < 3; i++) {
+          const d = new Date(); d.setDate(d.getDate() + i);
+          next3Days.push(d.toISOString().split('T')[0]);
+        }
+        
+        const upcoming = events.filter((e: any) => 
+          next3Days.some(d => (e.scheduled_for || "").startsWith(d)) && e.status !== 'cancelled'
+        ).sort((a: any, b: any) => (a.scheduled_for || '').localeCompare(b.scheduled_for || '')).slice(0, 10);
+        setUpcomingEvents(upcoming);
+
         const days = [];
         for (let i = 6; i >= 0; i--) {
           const d = new Date(); d.setDate(d.getDate() - i);
@@ -333,6 +367,233 @@ export default function Dashboard() {
           </GlassCard >
         </div >
       </div >
+
+      {/* New Widgets Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        {/* Today's Schedule Summary */}
+        <GlassCard className="lg:col-span-2">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-primary" />
+              Agenda de Hoje
+            </h3>
+            <span className="text-xs text-muted-foreground">{todayEvents.length} agendamentos</span>
+          </div>
+          <div className="space-y-2 max-h-[200px] overflow-y-auto">
+            {todayEvents.length === 0 ? (
+              <div className="text-center py-6 text-xs text-muted-foreground">
+                Nenhum agendamento para hoje
+              </div>
+            ) : (
+              todayEvents.slice(0, 6).map((event) => (
+                <div key={event.id} className="flex items-center justify-between p-2 bg-black/20 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-3 w-3 text-muted-foreground" />
+                    <span className="text-xs text-foreground">
+                      {event.scheduled_for ? new Date(event.scheduled_for).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
+                    </span>
+                    <span className="text-xs text-muted-foreground truncate max-w-[120px]">{event.full_name || 'Cliente'}</span>
+                  </div>
+                  <StatusPill status={event.status} />
+                </div>
+              ))
+            )}
+          </div>
+        </GlassCard>
+
+        {/* Upcoming Appointments (Next 3 Days) */}
+        <GlassCard className="lg:col-span-2">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <Activity className="h-4 w-4 text-success" />
+              Próximos 3 Dias
+            </h3>
+            <span className="text-xs text-muted-foreground">{upcomingEvents.length} agendamentos</span>
+          </div>
+          <div className="space-y-2 max-h-[200px] overflow-y-auto">
+            {upcomingEvents.length === 0 ? (
+              <div className="text-center py-6 text-xs text-muted-foreground">
+                Nenhum agendamento futuro
+              </div>
+            ) : (
+              upcomingEvents.map((event) => (
+                <div key={event.id} className="flex items-center justify-between p-2 bg-black/20 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="h-3 w-3 text-muted-foreground" />
+                    <span className="text-xs text-muted-foreground">
+                      {event.scheduled_for ? new Date(event.scheduled_for).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '--/--'}
+                    </span>
+                    <span className="text-xs text-foreground">
+                      {event.scheduled_for ? new Date(event.scheduled_for).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
+                    </span>
+                    <span className="text-xs text-muted-foreground truncate max-w-[100px]">{event.full_name || 'Cliente'}</span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </GlassCard>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        {/* Recent Activity Feed */}
+        <GlassCard className="lg:col-span-2">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <Shield className="h-4 w-4 text-warning" />
+              Atividade Recente
+            </h3>
+            <span className="text-xs text-muted-foreground">{auditLogs.length} eventos</span>
+          </div>
+          <div className="space-y-2 max-h-[220px] overflow-y-auto">
+            {auditLogs.length === 0 ? (
+              <div className="text-center py-6 text-xs text-muted-foreground">
+                Nenhuma atividade recente
+              </div>
+            ) : (
+              auditLogs.map((log, idx) => (
+                <div key={idx} className="flex items-start gap-2 p-2 bg-black/20 rounded-lg">
+                  <div className="mt-0.5">
+                    <Activity className="h-3 w-3 text-primary" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-foreground truncate">{log.action?.replace(/_/g, ' ')}</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {log.created_at ? new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <span className="text-[10px] text-muted-foreground">{log.resource}</span>
+                      <span className="text-[10px] text-primary/60">•</span>
+                      <span className="text-[10px] text-muted-foreground truncate">{log.resource_id?.substring(0, 8) || '-'}</span>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </GlassCard>
+
+        {/* System Health Indicator */}
+        <GlassCard>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <Cpu className="h-4 w-4 text-destructive" />
+              Saúde do Sistema
+            </h3>
+          </div>
+          <div className="space-y-3">
+            {systemHealth ? (
+              <>
+                <div className="flex items-center justify-between p-2 bg-black/20 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Database className="h-3 w-3 text-muted-foreground" />
+                    <span className="text-xs text-foreground">Banco de Dados</span>
+                  </div>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full ${systemHealth.db_ok ? 'bg-success/20 text-success' : 'bg-destructive/20 text-destructive'}`}>
+                    {systemHealth.db_ok ? 'Online' : 'Offline'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-black/20 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Wifi className="h-3 w-3 text-muted-foreground" />
+                    <span className="text-xs text-foreground">Redis</span>
+                  </div>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full ${systemHealth.redis_ok ? 'bg-success/20 text-success' : 'bg-destructive/20 text-destructive'}`}>
+                    {systemHealth.redis_ok ? 'Online' : 'Offline'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-black/20 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <MessageCircle className="h-3 w-3 text-muted-foreground" />
+                    <span className="text-xs text-foreground">WhatsApp</span>
+                  </div>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full ${systemHealth.wa_ok ? 'bg-success/20 text-success' : 'bg-destructive/20 text-destructive'}`}>
+                    {systemHealth.wa_ok ? 'Online' : 'Offline'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-black/20 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Users className="h-3 w-3 text-muted-foreground" />
+                    <span className="text-xs text-foreground">Fila de Revisão</span>
+                  </div>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full ${systemHealth.queue_empty ? 'bg-success/20 text-success' : 'bg-warning/20 text-warning'}`}>
+                    {systemHealth.queue_empty ? 'Vazia' : 'Pendente'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-black/20 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Zap className="h-3 w-3 text-muted-foreground" />
+                    <span className="text-xs text-foreground">Sem Erros (1h)</span>
+                  </div>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full ${systemHealth.no_critical ? 'bg-success/20 text-success' : 'bg-destructive/20 text-destructive'}`}>
+                    {systemHealth.no_critical ? 'OK' : 'Erros'}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-4 text-xs text-muted-foreground">
+                Carregando status...
+              </div>
+            )}
+          </div>
+        </GlassCard>
+
+        {/* Quick Actions Panel */}
+        <GlassCard>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <Zap className="h-4 w-4 text-primary" />
+              Ações Rápidas
+            </h3>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => window.location.href = '/agenda?action=new'}
+              className="flex flex-col items-center justify-center p-3 bg-primary/10 hover:bg-primary/20 border border-primary/20 rounded-lg transition-colors"
+            >
+              <Plus className="h-4 w-4 text-primary mb-1" />
+              <span className="text-[10px] text-primary font-medium">Novo Agendamento</span>
+            </button>
+            <button
+              onClick={() => window.location.href = '/leads?action=new'}
+              className="flex flex-col items-center justify-center p-3 bg-success/10 hover:bg-success/20 border border-success/20 rounded-lg transition-colors"
+            >
+              <Users className="h-4 w-4 text-success mb-1" />
+              <span className="text-[10px] text-success font-medium">Novo Lead</span>
+            </button>
+            <button
+              onClick={() => window.location.href = '/finance?action=new'}
+              className="flex flex-col items-center justify-center p-3 bg-warning/10 hover:bg-warning/20 border border-warning/20 rounded-lg transition-colors"
+            >
+              <DollarSign className="h-4 w-4 text-warning mb-1" />
+              <span className="text-[10px] text-warning font-medium">Nova Transação</span>
+            </button>
+            <button
+              onClick={() => window.location.href = '/auditoria'}
+              className="flex flex-col items-center justify-center p-3 bg-muted/10 hover:bg-muted/20 border border-muted/20 rounded-lg transition-colors"
+            >
+              <Shield className="h-4 w-4 text-muted-foreground mb-1" />
+              <span className="text-[10px] text-muted-foreground font-medium">Ver Auditoria</span>
+            </button>
+            <button
+              onClick={() => window.location.href = '/automacao'}
+              className="flex flex-col items-center justify-center p-3 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 rounded-lg transition-colors"
+            >
+              <Cpu className="h-4 w-4 text-purple-500 mb-1" />
+              <span className="text-[10px] text-purple-500 font-medium">Automação</span>
+            </button>
+            <button
+              onClick={() => window.location.reload()}
+              className="flex flex-col items-center justify-center p-3 bg-muted/10 hover:bg-muted/20 border border-muted/20 rounded-lg transition-colors"
+            >
+              <RefreshCw className="h-4 w-4 text-muted-foreground mb-1" />
+              <span className="text-[10px] text-muted-foreground font-medium">Atualizar</span>
+            </button>
+          </div>
+        </GlassCard>
+      </div>
 
       {showWaModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">

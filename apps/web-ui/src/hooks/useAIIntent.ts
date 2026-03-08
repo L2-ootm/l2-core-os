@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { apiGet } from "@/lib/api"; export type AIIntentNotification = {
+import { apiGet } from "@/lib/api";
+export type AIIntentNotification = {
     id: string;
     contact_name: string;
     contact_phone: string;
@@ -24,7 +25,7 @@ export function useAIIntent() {
         async function fetchRealIntents() {
             try {
                 // We fetch the human review queue, which acts as the real "L2 Motor" pending items
-                const res = await apiGet<any>('/ops/human-review/queue');
+                const res = await apiGet<any>('/human-review/list');
                 if (!mounted) return;
 
                 const queue = res.items || [];
