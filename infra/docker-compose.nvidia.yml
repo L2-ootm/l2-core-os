@@ -1,0 +1,17 @@
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  ollama-pull:
+    command: >
+      sh -c "
+      echo 'Iniciando download (NVIDIA CUDA)...' &&
+      ollama pull llama3.2:3b &&
+      echo 'Modelo pronto!'
+      "

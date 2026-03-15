@@ -31,6 +31,15 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return r.json();
 }
 
+export async function apiDelete<T>(path: string): Promise<T> {
+  const r = await fetch(`${API_BASE}${path}`, {
+    method: "DELETE",
+    headers: withAuth(),
+  });
+  if (!r.ok) throw new Error(`API ${r.status}`);
+  return r.json();
+}
+
 export async function waGet<T>(path: string): Promise<T> {
   const r = await fetch(`${WA_BASE}${path}`);
   if (!r.ok) throw new Error(`WA ${r.status}`);
@@ -45,4 +54,20 @@ export async function waPost<T>(path: string, body?: unknown): Promise<T> {
   });
   if (!r.ok) throw new Error(`WA ${r.status}`);
   return r.json();
+}
+
+export async function getAIQueueStatus(): Promise<any> {
+  return apiGet('/ai/queue-status');
+}
+
+export async function getAIQueueItem(queueId: string): Promise<any> {
+  return apiGet(`/ai/queue/${queueId}`);
+}
+
+export async function classifyMessage(messageId: string, phone: string, text: string): Promise<any> {
+  return apiPost('/ai/classify', {
+    message_id: messageId,
+    phone,
+    text
+  });
 }
